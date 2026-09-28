@@ -86,7 +86,7 @@ def api() -> dict:
     u32 = ctypes.WinDLL("user32", use_last_error=True)
     g32 = ctypes.WinDLL("gdi32", use_last_error=True)
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    W, H, B, U, I, D, P = wintypes.HWND, wintypes.HANDLE, wintypes.BOOL, wintypes.UINT, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p
+    W, B, U, I, D, P = wintypes.HWND, wintypes.BOOL, wintypes.UINT, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p
     HDC = wintypes.HDC
 
     def bind(dll, name, res, *args, optional=False):
