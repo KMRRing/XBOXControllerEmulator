@@ -1,0 +1,7 @@
+{
+  "name": "XBOXControllerEmulator",
+  "slug": "xboxcontrolleremulator",
+  "repo": "KMRRing/XBOXControllerEmulator",
+  "port": 5033,
+  "entry": "app.py"
+}

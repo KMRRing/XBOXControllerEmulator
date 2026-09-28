@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{name}}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="/static/icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>{{name}}</h1>
+  <p id="headline" class="headline">Starting.</p>
+</header>
+
+<main>
+  <section class="deck" aria-label="The pad">
+    <button id="pad" type="button" class="go" disabled>Show the pad</button>
+    <ul class="checks">
+      <li id="c-driver"><span class="led"></span><span class="what">Driver</span><span class="say">checking</span>
+        <button id="install" type="button" class="small" hidden>Install driver</button></li>
+      <li id="c-controller"><span class="led"></span><span class="what">Controller</span><span class="say">not plugged in</span></li>
+      <li id="c-screen"><span class="led"></span><span class="what">Screen</span><span class="say">—</span></li>
+    </ul>
+    <p class="hint" id="hint">On the pad: tap <b>Hide</b> to fold it away and touch the game directly, tap <b>Pad</b> to bring it
+      back, hold it for a second to close the pad. Run games in borderless or windowed mode — nothing can draw over
+      exclusive fullscreen.</p>
+  </section>
+
+  <section class="live" aria-labelledby="h-live">
+    <h2 id="h-live">What the game sees</h2>
+    <div class="readout" id="readout">
+      <div class="stick" data-s="l"><i></i></div>
+      <div class="pills" id="pills"></div>
+      <div class="stick" data-s="r"><i></i></div>
+    </div>
+  </section>
+
+  <section class="edit" aria-labelledby="h-edit">
+    <h2 id="h-edit">Layout</h2>
+    <div class="row">
+      <label class="field grow">Layout
+        <select id="layout"></select></label>
+      <label class="field">Opacity <output id="op-out"></output>
+        <input id="opacity" type="range" min="25" max="100" step="5"></label>
+    </div>
+    <p class="hint">Drag a control to move it. Tap one to size it or take it off the pad.</p>
+    <div class="stage" id="stage" aria-label="Layout editor"></div>
+    <div class="inspector" id="inspector" hidden>
+      <strong id="i-name"></strong>
+      <label class="field">Size <input id="i-size" type="range" min="3" max="40" step="0.5"></label>
+      <label class="field" id="i-wide-f">Width <input id="i-wide" type="range" min="1" max="4" step="0.1"></label>
+      <label class="check"><input id="i-on" type="checkbox"> On the pad</label>
+    </div>
+    <div class="row actions">
+      <button id="save" type="button" disabled>Save</button>
+      <input id="newname" type="text" placeholder="New layout name" maxlength="60" aria-label="New layout name">
+      <button id="saveas" type="button" class="quiet">Save as new</button>
+      <button id="revert" type="button" class="quiet" disabled>Undo changes</button>
+      <button id="delete" type="button" class="quiet danger">Delete</button>
+    </div>
+    <p class="note" id="editnote"></p>
+  </section>
+
+  <details class="system">
+    <summary>This device and sync</summary>
+    <dl class="facts" id="facts"></dl>
+    <button id="sync" type="button" class="quiet">Sync now</button>
+    <p class="note" id="syncnote"></p>
+  </details>
+</main>
+
+<footer>
+  <button id="stop" type="button" class="quiet">Stop and push</button>
+  <span class="version">{{version}}</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
