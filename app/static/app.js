@@ -27,23 +27,31 @@ function check(id, cls, say) {
   li.querySelector(".say").textContent = say;
 }
 
+const mode = () => (settings && settings.mode) || "pad";
+
 function paintStatus(s) {
   status = s;
-  const o = s.overlay, drv = s.driver;
+  const o = s.overlay, drv = s.driver, touch = mode() === "screen";
   const btn = $("#pad");
   btn.disabled = !s.windows;
-  btn.textContent = o.running ? "Take the pad down" : "Show the pad";
+  btn.textContent = touch ? (o.running ? "Stop full-screen touch" : "Start full-screen touch")
+    : (o.running ? "Take the pad down" : "Show the pad");
   btn.classList.toggle("up", o.running);
 
-  check("#c-driver", drv.ok ? "ok" : s.windows ? "bad" : "", drv.ok ? "ViGEmBus installed" : drv.error || "not installed");
+  check("#c-driver", drv.ok ? "ok" : s.windows && !touch ? "bad" : "",
+    drv.ok ? "ViGEmBus installed" : touch ? "not needed for full-screen touch" : drv.error || "not installed");
   $("#install").hidden = drv.ok || !s.windows || !s.installer;
-  check("#c-controller", o.running ? (o.pad_error ? "bad" : "ok") : "",
+  if (touch) check("#c-controller", "", "unplugged: full-screen touch is mouse input");
+  else check("#c-controller", o.running ? (o.pad_error ? "bad" : "ok") : "",
     o.running ? (o.pad_error ? o.pad_error : "Xbox 360 controller plugged in") : "plugged in while the pad is up");
   check("#c-screen", s.screen ? "ok" : "", s.screen ? `${s.screen.w} × ${s.screen.h}` : "not known");
 
   let line;
   if (!s.windows) line = "This runs on the Surface: the pad and the driver are Windows only.";
   else if (o.error) line = o.error;
+  else if (touch) line = !o.running ? "Ready. Start the game, then start full-screen touch."
+    : o.hidden ? "Full-screen touch is paused. Tap On on the screen to take it back."
+      : "Full-screen touch is on: a tap clicks where you tap.";
   else if (o.running && o.pad_error) line = "The pad is up, but no controller reaches the game.";
   else if (o.running) line = o.hidden ? "The pad is folded away. Tap Pad on the screen to bring it back."
     : "The pad is up. The game sees an Xbox 360 controller.";
@@ -54,6 +62,23 @@ function paintStatus(s) {
   const aspect = s.screen ? `${s.screen.w} / ${s.screen.h}` : "3 / 2";
   if ($("#stage").style.aspectRatio !== aspect) { $("#stage").style.aspectRatio = aspect; drawStage(); }
 }
+
+function paintMode() {
+  const touch = mode() === "screen";
+  for (const r of document.querySelectorAll('input[name="mode"]')) r.checked = r.value === mode();
+  $("#hold-f").hidden = !touch;
+  $("#hint-pad").hidden = touch;
+  $("#hint-screen").hidden = !touch;
+  $("#hold").value = settings.hold;
+  $("#hold-out").textContent = `${Number(settings.hold).toFixed(1)} s`;
+  if (status) paintStatus(status);
+}
+
+for (const r of document.querySelectorAll('input[name="mode"]')) {
+  r.onchange = async () => { await setting({ mode: r.value }); paintMode(); };
+}
+$("#hold").oninput = (e) => { $("#hold-out").textContent = `${Number(e.target.value).toFixed(1)} s`; };
+$("#hold").onchange = (e) => setting({ hold: +e.target.value });
 
 async function refresh() {
   try { paintStatus(await (await fetch("/api/status")).json()); }
@@ -346,6 +371,7 @@ async function loadLayouts(pick) {
   $("#snap").innerHTML = symmetry.snap_steps.map((s) => `<option value="${s}">${s ? `${s} %` : "Off"}</option>`).join("");
   $("#snap").value = String(settings.snap);
   $("#mirror").checked = settings.mirror;
+  paintMode();
   settle(all.find((l) => l.id === $("#layout").value));
 }
 

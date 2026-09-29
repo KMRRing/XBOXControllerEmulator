@@ -14,10 +14,16 @@ proportions on any resolution. Rectangular controls carry `w`, their width as a 
     key        a keyboard key, chosen per control (K1..K4)
     menu       the overlay's own handle — tap to hide/show the pad, hold to close the overlay
 
+Two modes. "pad" is the controller above. "screen" (full-screen touch) turns the whole screen into a direct
+touch surface for games whose own touch handling is broken: the cursor goes where the finger lands, a tap is a
+left click there, a tap that drags presses at the start and drags, holding still arms a right click (released
+on lift), two fingers scroll or, tapped together, right-click. Only the menu handle and the key buttons stay on
+screen; the gamepad controls are not there to be hit.
+
 Two things come out. The report is the XInput gamepad state (XUSB_REPORT: 16 button bits, two 8-bit
 triggers, four signed 16-bit stick axes with up positive). The events are what the trackpad, the mouse
 buttons and the keys ask the overlay to inject: ("move", dx, dy), ("down"|"up"|"click", "left"|"right"),
-("wheel", notches), ("keydown"|"keyup", virtual key).
+("wheel", notches), ("keydown"|"keyup", virtual key), and ("to", x, y) — the cursor to that point of the screen.
 """
 from __future__ import annotations
 
@@ -72,6 +78,8 @@ TAP_SLOP = 0.008             # ...where "did not travel" means less than this mu
 TAP_DRAG = 0.30              # a finger back down within this long after a tap holds the button and drags
 SCROLL_NOTCH = 0.025         # two fingers travelling this much of the short side is one wheel notch
 ACCEL_REF = 0.006            # per-event travel (of the short side) past which the cursor gains speed
+SCREEN_SLOP = 0.015          # full-screen touch: a finger that travels this much of the short side drags
+DOUBLE_TAP = 0.40            # ...and a second tap this soon, this close, lands exactly on the first (a double click)
 
 
 def _c(id_, x, y, s, w=1.0, on=True):
@@ -108,7 +116,8 @@ CENTRE_TWINS = (("ls", "cluster"), ("dpad", "rs"))
 SNAP_STEPS = (0.0, 1.0, 2.5, 5.0)                 # per cent of the screen's short side; 0 is off
 
 SETTINGS = {"active": "default", "opacity": 0.6, "snap": 2.5, "mirror": True,
-            "speed": 5, "idle": 1.0, "floating": False}
+            "speed": 5, "idle": 1.0, "floating": False, "mode": "pad", "hold": 0.5}
+MODES = ("pad", "screen")
 
 
 # --------------------------------------------------------------------------------- layouts
@@ -155,7 +164,9 @@ def clean_settings(raw) -> dict:
             "mirror": bool(raw.get("mirror", SETTINGS["mirror"])),
             "speed": int(round(_num(raw.get("speed"), 1, 10, SETTINGS["speed"]))),
             "idle": round(_num(raw.get("idle"), 0.0, 1.0, SETTINGS["idle"]), 2),
-            "floating": bool(raw.get("floating", SETTINGS["floating"]))}
+            "floating": bool(raw.get("floating", SETTINGS["floating"])),
+            "mode": raw.get("mode") if raw.get("mode") in MODES else SETTINGS["mode"],
+            "hold": round(_num(raw.get("hold"), 0.3, 1.5, SETTINGS["hold"]), 2)}
 
 
 # --------------------------------------------------------------------------------- geometry
@@ -230,12 +241,15 @@ class Pad:
         self.last_tap = -1.0                     # when the trackpad was last tapped: a quick return drags
         self.scroll = 0.0                        # two-finger travel not yet turned into wheel notches
         self.carry = [0.0, 0.0]                  # sub-pixel cursor movement, saved for the next event
+        self.last_click = (-1.0, 0.0, 0.0)       # full-screen touch: when and where the last tap clicked
         self.set_options(options)
         self.set_layout(layout)
 
     def set_options(self, options: dict | None) -> None:
         o = clean_settings(options or {})
-        self.speed, self.floating = o["speed"], o["floating"]
+        self.speed, self.floating, self.mode, self.hold = o["speed"], o["floating"], o["mode"], o["hold"]
+        if hasattr(self, "placed"):
+            self.release_all()
 
     def set_layout(self, layout: dict) -> None:
         self.layout = clean_layout(layout)
@@ -252,7 +266,11 @@ class Pad:
         return min(self.width, self.height)
 
     def visible(self) -> list:
-        return [p for p in self.placed if p.kind == "menu"] if self.hidden else self.placed
+        if self.hidden:
+            return [p for p in self.placed if p.kind == "menu"]
+        if self.mode == "screen":
+            return [p for p in self.placed if p.kind in ("menu", "key")]
+        return self.placed
 
     def _nearest(self, x: float, y: float, kinds=None):
         best, best_d = None, None
@@ -272,6 +290,8 @@ class Pad:
     def down(self, pid: int, x: float, y: float, now: float) -> set:
         p = self._nearest(x, y)
         if p is None:
+            if self.mode == "screen" and not self.hidden:
+                self._screen_down(pid, x, y, now)
             return set()
         f = {"on": p.id, "x": x, "y": y, "at": now, "kind": p.kind, "x0": x, "y0": y, "moved": False}
         if p.kind == "stick":
@@ -304,6 +324,8 @@ class Pad:
                 f["on"] = new
         elif f["kind"] == "trackpad":
             self._trackpad_move(f, dx, dy)
+        elif f["kind"] == "screen":
+            self._screen_move(f, x, y, dy)
         elif f["on"]:
             changed.add(f["on"])
         return changed
@@ -317,6 +339,8 @@ class Pad:
             return {"menu"}, "close" if now - f["at"] >= HOLD_TO_CLOSE else self.toggle()
         if f["kind"] == "trackpad":
             self._trackpad_up(f, now)
+        elif f["kind"] == "screen":
+            self._screen_up(f, now)
         elif f["kind"] == "click":
             self.events.append(("up", MOUSE_BUTTON[f["on"]]))
         elif f["kind"] == "key":
@@ -332,12 +356,7 @@ class Pad:
         if others:                                           # two fingers: scroll, and nobody taps
             for g in others:
                 g["moved"] = True
-            self.scroll += dy
-            notch = SCROLL_NOTCH * self.unit
-            notches = int(self.scroll / notch)
-            if notches:
-                self.scroll -= notches * notch
-                self.events.append(("wheel", notches))       # finger down, content down: natural scrolling
+            self._scroll(dy, 1 + len(others))
             return
         travel = math.hypot(dx, dy)
         gain = 0.4 * self.speed * (1.0 + min(2.0, travel / (ACCEL_REF * self.unit)))
@@ -346,6 +365,16 @@ class Pad:
         self.carry = [mx - ix, my - iy]
         if ix or iy:
             self.events.append(("move", ix, iy))
+
+    def _scroll(self, dy: float, fingers: int) -> None:
+        """Wheel notches from the fingers' travel — the average, so two fingers moving together scroll as far as
+        they went, not twice as far. Finger down, content down: natural scrolling."""
+        self.scroll += dy / max(1, fingers)
+        notch = SCROLL_NOTCH * self.unit
+        notches = int(self.scroll / notch)
+        if notches:
+            self.scroll -= notches * notch
+            self.events.append(("wheel", notches))
 
     def _trackpad_up(self, f: dict, now: float) -> None:
         if f.get("drag"):
@@ -364,6 +393,69 @@ class Pad:
             return
         self.events.append(("click", "left"))
         self.last_tap = now
+
+    # ---- full-screen touch
+    def _screen_fingers(self) -> list:
+        return [f for f in self.fingers.values() if f["kind"] == "screen"]
+
+    def _screen_down(self, pid: int, x: float, y: float, now: float) -> None:
+        """The cursor goes to the finger at once, so the game shows its hover. What the touch is — a tap, a
+        drag, a hold — is decided by what the finger does next."""
+        others = self._screen_fingers()
+        f = {"on": None, "kind": "screen", "x": x, "y": y, "x0": x, "y0": y, "at": now, "moved": False,
+             "state": "pending"}
+        if not others:
+            self.events.append(("to", x, y))
+        elif len(others) == 1 and others[0]["state"] in ("pending", "armed"):
+            others[0]["state"] = f["state"] = "scroll"          # a second finger: the pair scrolls or right-taps
+        else:
+            f["state"] = "ignored"                              # a third finger, or one landing mid-drag
+        self.fingers[pid] = f
+
+    def _screen_move(self, f: dict, x: float, y: float, dy: float) -> None:
+        far = math.hypot(x - f["x0"], y - f["y0"]) > SCREEN_SLOP * self.unit
+        if far:
+            f["moved"] = True
+        if f["state"] in ("pending", "armed") and far:          # a drag: press where the finger landed
+            f["state"] = "drag"
+            self.events += [("to", f["x0"], f["y0"]), ("down", "left"), ("to", x, y)]
+        elif f["state"] == "drag":
+            self.events.append(("to", x, y))
+        elif f["state"] == "scroll" and f["moved"]:
+            self._scroll(dy, len([g for g in self._screen_fingers() if g["state"] == "scroll"]))
+
+    def _screen_up(self, f: dict, now: float) -> None:
+        state = f["state"]
+        if state == "drag":
+            self.events += [("to", f["x"], f["y"]), ("up", "left")]
+        elif state == "armed":
+            self.events += [("to", f["x0"], f["y0"]), ("click", "right")]
+        elif state == "pending":
+            x, y = f["x0"], f["y0"]
+            at, lx, ly = self.last_click
+            if now - at <= DOUBLE_TAP and math.hypot(x - lx, y - ly) <= 3 * SCREEN_SLOP * self.unit:
+                x, y = lx, ly                                   # the same spot, so Windows sees a double click
+            self.events += [("to", x, y), ("click", "left")]
+            self.last_click = (now, x, y)
+        elif state == "scroll":
+            partners = [g for g in self._screen_fingers() if g["state"] == "scroll"]
+            if not f["moved"] and not any(g["moved"] for g in partners) and now - f["at"] <= TAP_MAX + 0.2:
+                self.events.append(("click", "right"))         # a two-finger tap, answered on the first lift
+            for g in partners:
+                g["state"] = "ignored"
+
+    def tick(self, now: float) -> bool:
+        """Called on the overlay's timer: a lone finger held still past the hold time arms a right click.
+        True when that changed what should be drawn."""
+        fingers = self._screen_fingers()
+        if len(fingers) == 1 and fingers[0]["state"] == "pending" and now - fingers[0]["at"] >= self.hold:
+            fingers[0]["state"] = "armed"
+            return True
+        return False
+
+    def armed(self) -> list:
+        """Where a right click is armed — the overlay draws a ring there, so a lift is a decision, not a guess."""
+        return [(f["x0"], f["y0"]) for f in self._screen_fingers() if f["state"] == "armed"]
 
     # ---- the menu handle
     def toggle(self) -> str:
@@ -386,6 +478,8 @@ class Pad:
             elif f["kind"] == "key" and f["on"] in self.by_id:
                 self.events.append(("keyup", self.by_id[f["on"]].key))
             elif f["kind"] == "trackpad" and f.get("drag"):
+                self.events.append(("up", "left"))
+            elif f["kind"] == "screen" and f["state"] == "drag":
                 self.events.append(("up", "left"))
         self.fingers = {}
         self.scroll = 0.0

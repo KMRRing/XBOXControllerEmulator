@@ -34,6 +34,16 @@ broken — Slay the Spire is one — are still played. Cursor moves are sent as 
 speed is the pad's own and Windows' pointer acceleration does not double it. When the cursor happens to be over
 one of the pad's own controls, the overlay makes itself click-through for the instant the click is injected.
 
+**Full-screen touch** is a second mode for games whose own touch handling is broken: one invisible window over
+the whole screen — drawn at an alpha of 1 of 255, so it shows nothing but still takes every touch — turns each
+touch into mouse input at that spot. A tap puts the cursor there and clicks; a touch that travels presses where
+it landed and drags; holding still arms a right click (a ring shows; lifting clicks); two fingers scroll, or
+tapped together right-click; two quick taps land on the same pixel, so games see a double click. To let its own
+mouse input through to the game it makes itself click-through (`WS_EX_TRANSPARENT`) while injecting, and for
+the whole of a drag. The virtual controller is unplugged in this mode, so games do not switch their prompts to
+controller buttons. The handle (*Off* / *On*) hands the screen back to the game and takes it again; the key
+buttons of the active layout stay. A mouse or the keyboard's touchpad is ignored while it is on.
+
 Exclusive fullscreen is the one thing no overlay can draw over. Games go in borderless or windowed mode.
 
 ## The page
@@ -80,8 +90,9 @@ Under `<home>/data`, where home is `%LOCALAPPDATA%\XBOXControllerEmulator`:
     layouts/<id>.json   one file per layout — the sync is newest-wins per file, so layouts never clobber each
                         other. layouts/default.json, if present, overrides the built-in default.
                         A deleted layout is a tombstone {"deleted": true}: the sync carries files, never deletions.
-    settings.json       the active layout, the opacity, the idle opacity, the pointer speed, floating sticks,
-                        and the editor's snap and mirror.
+    settings.json       the mode (controller or full-screen touch), the hold time for a right click, the
+                        active layout, the opacity, the idle opacity, the pointer speed, floating sticks, and the
+                        editor's snap and mirror.
 
 Kilobytes, and nothing secret.
 

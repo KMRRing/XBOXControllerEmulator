@@ -17,6 +17,12 @@ What makes it behave like a controller rather than like a window:
     per-monitor DPI awareness on this thread
         coordinates are physical pixels, so at 200 % scaling on a Surface the pad lands where it is drawn
 
+Full-screen touch (the "screen" mode) is the same machinery turned inside out: a window over the whole screen
+drawn at an alpha of 1 of 255 — invisible, but solid, so every touch lands on it — turns each touch into mouse
+input at that spot. While it injects, it makes itself click-through (WS_EX_TRANSPARENT), so the input reaches
+the game under it; during a drag it stays click-through until the button is let go, and the dragging finger
+stays with it because Windows keeps a touch with the window it went down on.
+
 Exclusive fullscreen is the one thing no overlay can draw over: games run in borderless / windowed fullscreen.
 """
 from __future__ import annotations
@@ -142,6 +148,7 @@ def api() -> dict:
         "CreateCompatibleDC": bind(g32, "CreateCompatibleDC", HDC, HDC),
         "CreateCompatibleBitmap": bind(g32, "CreateCompatibleBitmap", wintypes.HBITMAP, HDC, I, I),
         "SelectObject": bind(g32, "SelectObject", wintypes.HGDIOBJ, HDC, wintypes.HGDIOBJ),
+        "GetStockObject": bind(g32, "GetStockObject", wintypes.HGDIOBJ, I),
         "DeleteObject": bind(g32, "DeleteObject", B, wintypes.HGDIOBJ),
         "DeleteDC": bind(g32, "DeleteDC", B, HDC),
         "BitBlt": bind(g32, "BitBlt", B, HDC, I, I, I, I, HDC, I, I, D),
@@ -218,12 +225,13 @@ def cursor_to(x: int, y: int) -> INPUT:
     x = min(left + width - 1, max(left, x))
     y = min(top + height - 1, max(top, y))
     return mouse_input(MOUSE_MOVE | MOUSE_ABSOLUTE | MOUSE_VIRTUALDESK,
-                       (x - left) * 65535 // (width - 1 or 1), (y - top) * 65535 // (height - 1 or 1))
+                       round((x - left) * 65535 / max(1, width - 1)), round((y - top) * 65535 / max(1, height - 1)))
 
 
-def inputs_for(events: list) -> list:
-    """The pad's events as the INPUT records SendInput takes, in order. A click is a down and an up; the moves
-    are added up and sent as one absolute position from where the cursor is now."""
+def inputs_for(events: list, origin: tuple = (0, 0)) -> list:
+    """The pad's events as the INPUT records SendInput takes, in order. A click is a down and an up; relative
+    moves are added up and sent as one absolute position from where the cursor is now; ("to", x, y) is a point
+    of the pad's screen, whose top-left corner is `origin` on the desktop."""
     out = []
     dx = dy = 0
     for e in events:
@@ -236,7 +244,9 @@ def inputs_for(events: list) -> list:
             api()["GetCursorPos"](ctypes.byref(pt))
             out.append(cursor_to(pt.x + dx, pt.y + dy))
             dx = dy = 0
-        if kind == "wheel":
+        if kind == "to":
+            out.append(cursor_to(origin[0] + int(round(e[1])), origin[1] + int(round(e[2]))))
+        elif kind == "wheel":
             out.append(mouse_input(MOUSE_WHEEL, data=e[1] * 120))
         elif kind == "down":
             out.append(mouse_input(MOUSE_DOWN[e[1]]))
@@ -306,9 +316,9 @@ class Painter:
         r = wintypes.RECT(*box)
         self.a["DrawTextW"](self.dc, label, -1, ctypes.byref(r), 0x01 | 0x04 | 0x20 | 0x100)  # centred, one line, no clip
 
-    def clear(self) -> None:
+    def clear(self, colour: int = KEY) -> None:
         r = wintypes.RECT(0, 0, self.width, self.height)
-        self.a["FillRect"](self.dc, ctypes.byref(r), self.brush(KEY))
+        self.a["FillRect"](self.dc, ctypes.byref(r), self.brush(colour))
 
     def close(self) -> None:
         a = self.a
@@ -321,8 +331,14 @@ class Painter:
 def draw(p: Painter, pad: padlib.Pad, active_only: bool = False) -> None:
     """The whole pad, from scratch. GDI draws twenty shapes in well under a millisecond; only the pixels that
     changed are pushed to the screen. `active_only` is the top layer of the ghost mode: just the controls a
-    finger is on, and the handle."""
+    finger is on, and the handle. Where full-screen touch has a right click armed, a ring."""
     p.clear()
+    ring = pad.unit * 0.045
+    for x, y in pad.armed():
+        p.a["SelectObject"](p.dc, p.a["GetStockObject"](5))           # NULL_BRUSH: a ring, not a disc
+        p.a["SelectObject"](p.dc, p.pen(HOLD))
+        for grow in (0, p.line * 2):
+            p.a["Ellipse"](p.dc, int(x - ring - grow), int(y - ring - grow), int(x + ring + grow), int(y + ring + grow))
     pressed = pad.pressed()
     dpad = pad.dpad_state()
     holding = pad.held_menu_since() is not None
@@ -363,7 +379,10 @@ def draw(p: Painter, pad: padlib.Pad, active_only: bool = False) -> None:
                 p.a["Ellipse"](p.dc, l, t, r, b)
             else:
                 p.a["RoundRect"](p.dc, l, t, r, b, int(c.h * 0.5), int(c.h * 0.5))
-            label = ("Pad" if pad.hidden else "Hide") if c.kind == "menu" else c.label
+            if c.kind == "menu":                              # the handle says what a tap will do
+                label = ("On" if pad.hidden else "Off") if pad.mode == "screen" else ("Pad" if pad.hidden else "Hide")
+            else:
+                label = c.label
             size = c.h * (0.46 if len(label) <= 2 else 0.30 if len(label) <= 5 else 0.24)
             p.text(label, (l, t, r, b), size, WHITE_TEXT if live else TEXT.get(c.id, WHITE_TEXT))
 
@@ -372,17 +391,27 @@ class Overlay:
     """Start, stop, and read. Everything Win32 happens on the overlay's own thread; other threads only post
     messages to it, which is the one thing Windows lets any thread do to any window.
 
-    Two windows when the idle setting is below 100 % (the ghost mode): the base window carries every control
-    at the idle opacity — down to nearly invisible, but never absent, so it still takes the touches — and a
-    second window on top of it draws only the controls a finger is on, at the full opacity. Both feed the same
-    pad; a finger is captured by whichever it landed on."""
+    One window, or two:
+
+        the controller, plain        the base window carries every control
+        the controller, ghost mode   the base window carries every control at the idle opacity — never fully
+                                     transparent, because an alpha of 0 is not there to be touched — and a top
+                                     window draws the controls a finger is on at the full opacity
+        full-screen touch            the base window is solid and drawn at an alpha of 1: invisible, and it
+                                     catches every touch; the top window draws the handle, the key buttons and
+                                     the ring of an armed right click
+
+    Both windows feed the same pad; a finger is captured by whichever it landed on."""
 
     def __init__(self, port: int):
         self.port = port
         self.thread = None
-        self.hwnd = None                                  # the base window: every control, the timer
-        self.top = None                                   # the ghost mode's top window, or None
+        self.hwnd = None                                  # the base window: it holds the timer
+        self.top = None                                   # the top window, when the mode has one
         self.painters: dict = {}                          # hwnd -> Painter
+        self.controller = None
+        self.aside = False                                # click-through right now, for injected input
+        self.held: set = set()                            # mouse buttons injected down and not yet up
         self.error = ""
         self.pad_error = ""
         self.report = padlib.blank()
@@ -398,8 +427,9 @@ class Overlay:
         return bool(self.thread and self.thread.is_alive() and self.hwnd)
 
     def status(self) -> dict:
-        return {"running": self.running, "error": self.error, "pad_error": self.pad_error,
-                "hidden": self.hidden, "screen": self.screen, "report": dict(self.report)}
+        return {"running": self.running, "error": self.error, "pad_error": self.pad_error, "hidden": self.hidden,
+                "mode": self.settings["mode"] if self.running else None, "screen": self.screen,
+                "report": dict(self.report)}
 
     def start(self, layout: dict, settings: dict) -> dict:
         if os.name != "nt":
@@ -444,7 +474,6 @@ class Overlay:
 
     def _run(self) -> None:
         a = None
-        self.controller = None
         try:
             a = api()
             if a["SetThreadDpiAwarenessContext"]:
@@ -457,16 +486,15 @@ class Overlay:
             self.left, self.top_y, w, h = primary_monitor()
             self.screen = {"w": w, "h": h}
             self.pad = padlib.Pad(layout, w, h, self.settings)
-            self._windows(w, h)
-            self._render()
-            try:
-                self.controller = vigem.Controller()
-                self.controller.connect()
-            except Exception as e:                        # noqa: BLE001  the pad still draws; say why it is mute
-                self.controller, self.pad_error = None, str(e)
+            self._register()
+            self.hwnd = self._window(w, h, "XBOX pad")
+            self.painters = {self.hwnd: Painter(w, h)}
+            self._layers()
+            self._plug()
             for hwnd in self._hwnds():
                 a["ShowWindow"](hwnd, 4)                  # SW_SHOWNOACTIVATE
             self._topmost()
+            self._hit()
             a["SetTimer"](self.hwnd, 1, 100, None)
             self.started_at = time.time()
         except Exception as e:                            # noqa: BLE001
@@ -482,30 +510,28 @@ class Overlay:
             a["DispatchMessageW"](ctypes.byref(msg))
         self._cleanup()
 
+    # ---- what the mode asks for
+    def _screen_mode(self) -> bool:
+        return self.settings["mode"] == "screen"
+
+    def _ghost(self) -> bool:
+        return self.settings["idle"] < 1.0 and not self._screen_mode()
+
     def _hwnds(self) -> list:
         return [h for h in (self.hwnd, self.top) if h]
 
-    def _ghost(self) -> bool:
-        return self.settings["idle"] < 1.0
-
-    def _windows(self, w: int, h: int) -> None:
+    def _register(self) -> None:
         a = api()
         self._proc = WNDPROC(self._wndproc)               # kept on self: collected, it would crash the process
-        inst = a["GetModuleHandleW"](None)
+        self._inst = a["GetModuleHandleW"](None)
         cls = WNDCLASSEXW()
         cls.cbSize = ctypes.sizeof(cls)
         cls.lpfnWndProc = self._proc
-        cls.hInstance = inst
+        cls.hInstance = self._inst
         cls.lpszClassName = f"XBOXPadOverlay{id(self)}{int(time.time())}"
         if not a["RegisterClassExW"](ctypes.byref(cls)):
             raise OSError(f"RegisterClassEx failed ({ctypes.get_last_error()})")
-        self._class, self._inst = cls.lpszClassName, inst
-        self.hwnd = self._window(w, h, "XBOX pad")
-        self.painters = {self.hwnd: Painter(w, h)}
-        if self._ghost():
-            self.top = self._window(w, h, "XBOX pad (active)")
-            self.painters[self.top] = Painter(w, h)
-        self._alpha()
+        self._class = cls.lpszClassName
 
     def _window(self, w: int, h: int, title: str):
         a = api()
@@ -520,17 +546,63 @@ class Overlay:
                 a["SetWindowFeedbackSetting"](hwnd, kind, 0, ctypes.sizeof(off), ctypes.byref(off))
         return hwnd
 
-    def _alpha(self) -> None:
-        """The base layer at the idle opacity — 1 at the least, because an alpha of 0 is not there to be
-        touched — and the top layer, if there is one, at the full opacity."""
+    def _layers(self) -> None:
+        """Make the windows fit the mode: a top window when the mode has one, the base window solid for
+        full-screen touch, the opacities; then draw it all. Called at the start and whenever the settings
+        change, so a mode can be switched with the pad up."""
+        a = api()
+        wanted = self._ghost() or self._screen_mode()
+        if wanted and not self.top:
+            self.top = self._window(self.screen["w"], self.screen["h"], "XBOX pad (top)")
+            self.painters[self.top] = Painter(self.screen["w"], self.screen["h"])
+            if self.started_at:
+                a["ShowWindow"](self.top, 4)
+        elif self.top and not wanted:
+            self.painters.pop(self.top).close()
+            a["DestroyWindow"](self.top)
+            self.top = None
         full = int(round(255 * self.settings["opacity"]))
-        base = max(1, int(round(full * self.settings["idle"]))) if self._ghost() else full
-        api()["SetLayeredWindowAttributes"](self.hwnd, KEY, base, 0x1 | 0x2)
+        base = 1 if self._screen_mode() else max(1, int(round(full * self.settings["idle"]))) if self._ghost() else full
+        a["SetLayeredWindowAttributes"](self.hwnd, KEY, base, 0x1 | 0x2)
         if self.top:
-            api()["SetLayeredWindowAttributes"](self.top, KEY, full, 0x1 | 0x2)
+            a["SetLayeredWindowAttributes"](self.top, KEY, full, 0x1 | 0x2)
+        if self._screen_mode():
+            self.painters[self.hwnd].clear(FILL)          # solid: every pixel catches a touch
+        self._topmost()
+        self._redraw(None)
+
+    def _hit(self) -> None:
+        """Which windows take touches right now. None of them while stepping aside for injected input; and not
+        the invisible full-screen window while full-screen touch is paused — the screen is the game's then.
+        Click-through rather than hidden: hiding and showing a window is a slower thing to ask of Windows."""
+        a = api()
+        for hwnd in self._hwnds():
+            through = self.aside or (hwnd == self.hwnd and self._screen_mode() and self.pad.hidden)
+            style = a["GetWindowLongPtrW"](hwnd, GWL_EXSTYLE)
+            want = style | WS_EX_TRANSPARENT if through else style & ~WS_EX_TRANSPARENT
+            if want != style:
+                a["SetWindowLongPtrW"](hwnd, GWL_EXSTYLE, want)
+
+    def _plug(self) -> None:
+        """The virtual controller is plugged in for the controller and unplugged for full-screen touch, where a
+        connected pad would only make a game switch its prompts to controller buttons."""
+        if self._screen_mode():
+            if self.controller:
+                self.controller.close()
+                self.controller = None
+            self.pad_error = ""
+            return
+        if self.controller:
+            return
+        try:
+            self.controller = vigem.Controller()
+            self.controller.connect()
+            self.pad_error = ""
+        except Exception as e:                            # noqa: BLE001  the pad still draws; say why it is mute
+            self.controller, self.pad_error = None, str(e)
 
     def _topmost(self) -> None:                           # HWND_TOPMOST; NOMOVE | NOSIZE | NOACTIVATE | NOOWNERZORDER
-        for hwnd in self._hwnds():                        # the top layer last, so it ends up on top
+        for hwnd in self._hwnds():                        # the top window last, so it ends up on top
             api()["SetWindowPos"](hwnd, ctypes.c_void_p(-1).value, 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x200)
 
     def _refit(self) -> None:
@@ -541,9 +613,13 @@ class Overlay:
             self.painters[hwnd].close()
             self.painters[hwnd] = Painter(w, h)
         self.pad.resize(w, h)
-        self._redraw(None)
+        self._layers()
 
+    # ---- drawing
     def _render(self) -> None:
+        if self._screen_mode():
+            draw(self.painters[self.top], self.pad)       # the base window stays one solid fill
+            return
         draw(self.painters[self.hwnd], self.pad)
         if self.top:
             draw(self.painters[self.top], self.pad, active_only=True)
@@ -552,7 +628,8 @@ class Overlay:
         """Repaint the off-screen bitmaps, then invalidate only what moved — or everything, given None."""
         a = api()
         self._render()
-        for hwnd in self._hwnds():
+        windows = [self.top] if self._screen_mode() and ids is not None else self._hwnds()
+        for hwnd in windows:
             if ids is None:
                 a["InvalidateRect"](hwnd, None, False)
                 continue
@@ -562,6 +639,7 @@ class Overlay:
                     r = wintypes.RECT(*c.box(grow))
                     a["InvalidateRect"](hwnd, ctypes.byref(r), False)
 
+    # ---- output
     def _send(self) -> None:
         report = self.pad.report()
         if report != self.report:
@@ -576,45 +654,61 @@ class Overlay:
         a["GetCursorPos"](ctypes.byref(pt))
         return a["WindowFromPoint"](pt) in self._hwnds()
 
+    def _step_aside(self, on: bool) -> None:
+        """Click-through for injected input, or back. Only input arriving meanwhile goes past: a touch already
+        down stays with the window it went down on."""
+        if on != self.aside:
+            self.aside = on
+            self._hit()
+
     def _inject(self, events: list) -> None:
-        """Cursor moves go straight in. A button, a wheel or a key lands wherever the cursor is — and if that
-        is one of these windows, the overlay steps aside for the moment: click-through for the injected input,
-        then back. The wait is for the system to pick the input up before the window is solid again."""
+        """Mouse and keyboard input, into whatever is under the cursor.
+
+        Full-screen touch: the cursor is always over the solid base window, so every injection steps aside,
+        and while a button is held — a drag — it stays aside until the button is let go. The controller: moves
+        go straight in, and a button, a wheel or a key steps aside only when the cursor happens to be on one of
+        the pad's controls. The short wait is for Windows to route the input before the windows are solid again."""
         if not events:
             return
-        moves = [e for e in events if e[0] == "move"]
-        rest = [e for e in events if e[0] != "move"]
-        send_inputs(inputs_for(moves))
-        if not rest:
-            return
-        a = api()
-        step_aside = any(e[0] != "keydown" and e[0] != "keyup" for e in rest) and self._cursor_on_me()
-        if step_aside:
-            for hwnd in self._hwnds():
-                a["SetWindowLongPtrW"](hwnd, GWL_EXSTYLE, a["GetWindowLongPtrW"](hwnd, GWL_EXSTYLE) | WS_EX_TRANSPARENT)
-        try:
-            send_inputs(inputs_for(rest))
-            if step_aside:
+        for kind, *rest in events:
+            if kind == "down":
+                self.held.add(rest[0])
+            elif kind == "up":
+                self.held.discard(rest[0])
+        records = inputs_for(events, (self.left, self.top_y))
+        if self._screen_mode():
+            self._step_aside(True)
+            send_inputs(records)
+            if not self.held:
                 time.sleep(0.03)
-        finally:
-            if step_aside:
-                for hwnd in self._hwnds():
-                    a["SetWindowLongPtrW"](hwnd, GWL_EXSTYLE, a["GetWindowLongPtrW"](hwnd, GWL_EXSTYLE) & ~WS_EX_TRANSPARENT)
+                self._step_aside(False)
+            return
+        buttons = any(e[0] in ("down", "up", "click", "wheel") for e in events)
+        if buttons and self._cursor_on_me():
+            self._step_aside(True)
+            send_inputs(records)
+            time.sleep(0.03)
+            self._step_aside(False)
+        else:
+            send_inputs(records)
 
+    # ---- input
     def _pointer(self, hwnd, msg: int, wparam: int, lparam: int) -> None:
         a = api()
         pid = wparam & 0xFFFF
         x, y = _xy(lparam)
         x, y = x - self.left, y - self.top_y
         now = time.time()
-        before = self.pad.hidden
+        before, armed = self.pad.hidden, self.pad.armed()
         action = None
         if msg == WM_POINTERDOWN:
+            kind = wintypes.DWORD(0)
+            mouse = bool(a["GetPointerType"]) and a["GetPointerType"](pid, ctypes.byref(kind)) and kind.value == PT_MOUSE
+            if mouse and self._screen_mode():
+                return                                    # full-screen touch is for fingers and the pen
             changed = self.pad.down(pid, x, y, now)
-            if changed and a["GetPointerType"]:
-                kind = wintypes.DWORD(0)
-                if a["GetPointerType"](pid, ctypes.byref(kind)) and kind.value == PT_MOUSE:
-                    a["SetCapture"](hwnd)
+            if changed and mouse:
+                a["SetCapture"](hwnd)
         elif msg == WM_POINTERUPDATE and (wparam >> 16) & POINTER_FLAG_INCONTACT:
             changed = self.pad.move(pid, x, y)
         else:                                             # up, capture lost, or an update no longer in contact
@@ -624,8 +718,12 @@ class Overlay:
         if action == "close":
             a["PostMessageW"](self.hwnd, WM_CLOSE, 0, 0)
         self.hidden = self.pad.hidden
-        if changed or self.pad.hidden != before:
-            self._redraw(None if self.pad.hidden != before else changed)
+        if self.pad.hidden != before:
+            self._hit()
+        if self.pad.hidden != before or self.pad.armed() != armed:
+            self._redraw(None)
+        elif changed:
+            self._redraw(changed)
         self._send()
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
@@ -656,16 +754,14 @@ class Overlay:
                 self._tick()
                 return 0
             if msg == WM_APP_RELOAD and self._pending:
-                layout, settings = self._pending
-                ghost_before = self._ghost()
-                self.settings = settings
-                self.pad.set_options(settings)
+                layout, self.settings = self._pending
+                self.pad.set_options(self.settings)       # lets go of everything held
                 self.pad.set_layout(layout)
-                if self._ghost() != ghost_before:         # a layer appears or goes: simplest to start over
-                    self._relayer()
-                self._alpha()
-                self._redraw(None)
-                self._send()
+                self._send()                              # ...and tells the game
+                self._step_aside(False)
+                self._plug()
+                self._layers()
+                self._hit()
                 return 0
             if msg in (WM_DISPLAYCHANGE, WM_DPICHANGED):
                 self._refit()
@@ -673,6 +769,7 @@ class Overlay:
             if msg == WM_CLOSE:
                 self.pad.release_all()                    # nothing stays held in the game
                 self._inject(self.pad.take_events())
+                self._step_aside(False)
                 if self.top:
                     a["DestroyWindow"](self.top)
                 a["DestroyWindow"](self.hwnd)
@@ -685,25 +782,14 @@ class Overlay:
             self.error = f"{type(e).__name__}: {e}"
         return a["DefWindowProcW"](hwnd, msg, wparam, lparam)
 
-    def _relayer(self) -> None:
-        """The ghost mode switched on or off while the pad is up: make or drop the top layer."""
-        a = api()
-        if self.top and not self._ghost():
-            self.painters.pop(self.top).close()
-            a["DestroyWindow"](self.top)
-            self.top = None
-        elif self._ghost() and not self.top:
-            w, h = self.screen["w"], self.screen["h"]
-            self.top = self._window(w, h, "XBOX pad (active)")
-            self.painters[self.top] = Painter(w, h)
-            a["ShowWindow"](self.top, 4)
-            self._topmost()
-
     def _tick(self) -> None:
         self._ticks = getattr(self, "_ticks", 0) + 1
+        now = time.time()
         held = self.pad.held_menu_since()
-        if held is not None and time.time() - held >= padlib.HOLD_TO_CLOSE:
+        if held is not None and now - held >= padlib.HOLD_TO_CLOSE:
             api()["PostMessageW"](self.hwnd, WM_CLOSE, 0, 0)
+        if self.pad.tick(now):                            # a right click armed: show the ring
+            self._redraw(None)
         if self._ticks % 20 == 0:
             self._topmost()
 
@@ -716,8 +802,10 @@ class Overlay:
         for painter in self.painters.values():
             painter.close()
         self.controller, self.painters, self.hwnd, self.top = None, {}, None, None
+        self.aside, self.held = False, set()
         self.report = padlib.blank()
         self.hidden = False
+        self.started_at = 0.0
 
 
 def primary_monitor() -> tuple:

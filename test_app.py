@@ -54,7 +54,10 @@ def test_a_layout_is_cleaned_not_trusted():
     assert next(c for c in lay["controls"] if c["id"] == "menu")["on"], "the menu handle cannot be switched off"
     assert lay["id"] == "mine" and lay["name"] == "Mine!"
     assert pad.clean_settings({"opacity": 3, "active": "My Pad", "snap": 2.4, "mirror": 0, "speed": 40, "idle": "x"}) == {
-        "active": "my-pad", "opacity": 1.0, "snap": 2.5, "mirror": False, "speed": 10, "idle": 1.0, "floating": False}
+        "active": "my-pad", "opacity": 1.0, "snap": 2.5, "mirror": False, "speed": 10, "idle": 1.0, "floating": False,
+        "mode": "pad", "hold": 0.5}
+    assert pad.clean_settings({"mode": "screen", "hold": 9})["mode"] == "screen"
+    assert pad.clean_settings({"mode": "desktop", "hold": 9}) | {} == pad.clean_settings({"hold": 1.5}), "unknown modes fall back"
     assert pad.clean_settings({"snap": "off"})["snap"] == 2.5, "nonsense snaps fall back to the default step"
 
 
@@ -213,10 +216,13 @@ def test_two_fingers_tap_for_the_right_button_and_scroll_when_they_travel():
     p.down(1, x - 20, y, 1.0)
     p.down(2, x + 20, y, 1.0)
     notch = pad.SCROLL_NOTCH * min(W, H)
-    p.move(1, x - 20, y + notch * 2.5)
-    assert p.take_events() == [("wheel", 2)], "finger down, content down"
-    p.move(2, x + 20, y - notch * 3)
-    assert p.take_events() == [("wheel", -2)], "the half notch left over carries"
+    p.move(1, x - 20, y + notch * 2.5)                         # two fingers travelling together, one event each
+    p.move(2, x + 20, y + notch * 2.5)
+    wheel = lambda: sum(e[1] for e in p.take_events() if e[0] == "wheel")  # noqa: E731
+    assert wheel() == 2, "finger down, content down; as far as the fingers went, not twice as far"
+    p.move(1, x - 20, y - notch * 0.5)
+    p.move(2, x + 20, y - notch * 0.5)
+    assert wheel() == -2, "the half notch left over carries: +0.5 - 3 = -2.5"
     p.up(1, 2.0)
     p.up(2, 2.0)
     assert p.take_events() == [], "fingers that scrolled did not tap"
@@ -254,6 +260,111 @@ def test_a_floating_stick_centres_where_the_finger_lands():
     assert p.report()["lx"] == 0
     p.move(1, x + r * 0.9 + r * pad.STICK_THROW / 2, y)
     assert p.report()["lx"] == pytest.approx(16384, abs=2)
+
+
+# --------------------------------------------------------------------------------- full-screen touch
+def screen(**extra) -> pad.Pad:
+    """Full-screen touch, with key button K1 switched on."""
+    lay = pad.clean_layout({"name": "s", "controls": [{"id": "k1", "on": True, **DEF["k1"]}]})
+    return pad.Pad(lay, W, H, {"mode": "screen", **extra})
+
+
+def test_full_screen_a_tap_puts_the_cursor_there_and_clicks():
+    p = screen()
+    p.down(1, 1000, 700, 0.0)
+    assert p.take_events() == [("to", 1000, 700)], "the cursor goes to the finger at once — the game shows its hover"
+    p.move(1, 1004, 703)                                       # a finger's jitter is not a drag
+    p.up(1, 0.2)
+    assert p.take_events() == [("to", 1000, 700), ("click", "left")], "the click lands where the finger landed"
+    assert p.report() == pad.blank()
+
+
+def test_full_screen_a_touch_that_travels_drags_from_where_it_landed():
+    p = screen()
+    p.down(1, 1000, 700, 0.0)
+    p.take_events()
+    far = pad.SCREEN_SLOP * min(W, H) + 1
+    p.move(1, 1000 + far, 700)
+    assert p.take_events() == [("to", 1000, 700), ("down", "left"), ("to", 1000 + far, 700)]
+    p.move(1, 1400, 900)
+    assert p.take_events() == [("to", 1400, 900)]
+    p.up(1, 3.0)
+    assert p.take_events() == [("to", 1400, 900), ("up", "left")]
+
+
+def test_full_screen_holding_still_arms_a_right_click_released_on_lift():
+    p = screen(hold=0.5)
+    p.down(1, 800, 600, 0.0)
+    p.take_events()
+    assert not p.tick(0.3) and p.armed() == []
+    assert p.tick(0.5) and p.armed() == [(800, 600)], "armed at the hold time: the overlay draws a ring there"
+    assert not p.tick(0.6), "armed once"
+    p.up(1, 1.2)
+    assert p.take_events() == [("to", 800, 600), ("click", "right")]
+
+
+def test_full_screen_a_finger_that_moves_after_arming_drags_instead():
+    p = screen(hold=0.5)
+    p.down(1, 800, 600, 0.0)
+    p.tick(0.6)
+    p.move(1, 900, 600)
+    assert ("down", "left") in p.take_events() and p.armed() == []
+    p.up(1, 1.0)
+    assert p.take_events()[-1] == ("up", "left")
+
+
+def test_full_screen_two_quick_taps_land_on_the_same_pixel():
+    p = screen()
+    p.down(1, 1000, 700, 0.0)
+    p.up(1, 0.1)
+    p.down(1, 1006, 695, 0.2)
+    p.up(1, 0.3)
+    clicks = [e for e in p.take_events() if e[0] == "to"]
+    assert clicks[-1] == ("to", 1000, 700), "within reach of the first tap: exactly there, a double click"
+    p.down(1, 1006, 695, 2.0)
+    p.up(1, 2.1)
+    assert p.take_events()[-2] == ("to", 1006, 695), "much later: where the finger is"
+
+
+def test_full_screen_two_fingers_scroll_or_tap_for_a_right_click():
+    p = screen()
+    p.down(1, 900, 700, 0.0)
+    p.down(2, 1100, 700, 0.02)
+    p.up(1, 0.1)
+    p.up(2, 0.12)
+    assert p.take_events() == [("to", 900, 700), ("click", "right")], "one right click, and no left click"
+    notch = pad.SCROLL_NOTCH * min(W, H)
+    p.down(1, 900, 700, 1.0)
+    p.down(2, 1100, 700, 1.0)
+    p.take_events()
+    for y in (700 + notch, 700 + notch * 2):
+        p.move(1, 900, y)
+        p.move(2, 1100, y)
+    assert sum(e[1] for e in p.take_events() if e[0] == "wheel") == 2
+    p.up(1, 2.0)
+    p.up(2, 2.0)
+    assert p.take_events() == [], "fingers that scrolled neither click nor drag"
+
+
+def test_full_screen_leaves_only_the_handle_and_the_keys_and_the_handle_pauses_it():
+    p = screen()
+    assert {c.id for c in p.visible()} == {"menu", "k1"}
+    ax, ay, _ = centre(p.layout, "a")
+    p.down(1, ax, ay, 0.0)
+    assert p.take_events() == [("to", ax, ay)], "where A would be is just screen"
+    p.up(1, 0.1)
+    p.take_events()
+    kx, ky, _ = centre(p.layout, "k1")
+    p.down(2, kx, ky, 1.0)
+    p.up(2, 1.1)
+    assert p.take_events() == [("keydown", "Escape"), ("keyup", "Escape")], "the key buttons still work"
+    p.down(3, 1000, 700, 2.0)
+    p.move(3, 1300, 700)
+    p.take_events()
+    p.toggle()                                                 # paused mid-drag: the button is let go
+    assert p.take_events() == [("up", "left")]
+    p.down(4, 1000, 700, 3.0)
+    assert p.take_events() == [] and p.fingers == {}, "paused, the screen is the game's"
 
 
 # --------------------------------------------------------------------------------- the driver's wire format
@@ -356,7 +467,10 @@ def test_settings_are_checked(app):
     assert call("/api/settings", {"active": "nowhere"})[0] == 404
     status, body = call("/api/settings", {"opacity": 0.4, "snap": 5})
     assert status == 200 and body["settings"] == {"active": "default", "opacity": 0.4, "snap": 5.0, "mirror": True,
-                                                  "speed": 5, "idle": 1.0, "floating": False}
+                                                  "speed": 5, "idle": 1.0, "floating": False, "mode": "pad",
+                                                  "hold": 0.5}
+    status, body = call("/api/settings", {"mode": "screen", "hold": 0.8})
+    assert status == 200 and (body["settings"]["mode"], body["settings"]["hold"]) == ("screen", 0.8)
     listing = call("/api/layouts")[1]
     assert listing["symmetry"]["cluster"] == list(pad.CLUSTER) and "Escape" in listing["keys"]
     assert call("/api/layouts/save", {"layout": {"controls": []}})[0] == 400, "a layout needs a name"

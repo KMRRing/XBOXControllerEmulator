@@ -16,6 +16,14 @@
 
 <main>
   <section class="deck" aria-label="The pad">
+    <div class="modes">
+      <div class="seg" role="radiogroup" aria-label="Mode">
+        <label><input type="radio" name="mode" value="pad" checked> Controller</label>
+        <label><input type="radio" name="mode" value="screen"> Full-screen touch</label>
+      </div>
+      <label class="field" id="hold-f" hidden>Hold for a right click <output id="hold-out"></output>
+        <input id="hold" type="range" min="0.3" max="1.5" step="0.1"></label>
+    </div>
     <button id="pad" type="button" class="go" disabled>Show the pad</button>
     <ul class="checks">
       <li id="c-driver"><span class="led"></span><span class="what">Driver</span><span class="say">checking</span>
@@ -23,9 +31,14 @@
       <li id="c-controller"><span class="led"></span><span class="what">Controller</span><span class="say">not plugged in</span></li>
       <li id="c-screen"><span class="led"></span><span class="what">Screen</span><span class="say">—</span></li>
     </ul>
-    <p class="hint" id="hint">On the pad: tap <b>Hide</b> to fold it away and touch the game directly, tap <b>Pad</b> to bring it
-      back, hold it for a second to close the pad. Run games in borderless or windowed mode — nothing can draw over
-      exclusive fullscreen.</p>
+    <p class="hint" id="hint-pad">On the pad: tap <b>Hide</b> to fold it away and touch the game directly, tap <b>Pad</b> to
+      bring it back, hold it for a second to close the pad. Run games in borderless or windowed mode — nothing can
+      draw over exclusive fullscreen.</p>
+    <p class="hint" id="hint-screen" hidden>The whole screen becomes a mouse, for games whose own touch is broken.
+      Tap: the cursor goes there and clicks. Touch and drag: presses where you touched and drags. Hold still: a ring
+      appears, lift for a right click. Two fingers: scroll, or tap together for a right click. Tap <b>Off</b> to hand
+      the screen back to the game, <b>On</b> to take it again; hold it to close. The key buttons of the active
+      layout stay on screen. A mouse or the keyboard's touchpad is ignored while it is on.</p>
   </section>
 
   <section class="live" aria-labelledby="h-live">
