@@ -167,7 +167,7 @@ def publish(tag: str, notes: str, tok: str) -> str:
     except RuntimeError:
         pass                                                   # a first push: nothing there yet
     else:
-        git("rebase", "-q", "FETCH_HEAD")
+        git(*signature(), "rebase", "-q", "FETCH_HEAD")
     git(*signature(), "tag", "-a", tag, "-m", f"{app['name']} {tag}")
     git("push", "-q", remote, f"HEAD:{branch}")
     git("push", "-q", remote, tag)
