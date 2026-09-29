@@ -1,0 +1,11 @@
+{
+ "active": "base",
+ "opacity": 0.55,
+ "snap": 2.5,
+ "mirror": false,
+ "speed": 2,
+ "idle": 0.2,
+ "floating": false,
+ "mode": "screen",
+ "hold": 0.5
+}
