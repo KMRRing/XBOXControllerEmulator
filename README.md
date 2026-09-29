@@ -37,8 +37,11 @@ Exclusive fullscreen is the one thing no overlay can draw over. Games go in bord
   and Install. Once.
 * **What the game sees.** The live controller state, so a game's dead input is diagnosed here and not in the
   game.
-* **Layout.** Drag controls, size them, switch any of them off. Layouts are saved by name and one is active.
-  Opacity is a slider.
+* **Layout.** Drag controls, size them by number, switch any of them off. A snap grid (1, 2.5 or 5 % of the
+  screen's short side) keeps positions on a lattice; arrow keys nudge by one step. With *Mirror* on, the right
+  side follows the left: LT/RT, LB/RB, Back/Start and the stick clicks match in place and size; A B X Y move and
+  size as one cluster with a *Spread* control, and their centre mirrors the left stick; the right stick mirrors
+  the D-pad. Layouts are saved by name and one is active. Opacity is a slider.
 
 ## The files
 

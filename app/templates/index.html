@@ -45,12 +45,25 @@
       <label class="field">Opacity <output id="op-out"></output>
         <input id="opacity" type="range" min="25" max="100" step="5"></label>
     </div>
-    <p class="hint">Drag a control to move it. Tap one to size it or take it off the pad.</p>
-    <div class="stage" id="stage" aria-label="Layout editor"></div>
+    <div class="row tools">
+      <label class="field">Snap to a grid
+        <select id="snap"></select></label>
+      <label class="check"><input id="mirror" type="checkbox"> Mirror left and right</label>
+    </div>
+    <p class="hint">Drag a control to move it; arrow keys nudge it one grid step, Shift for four. With Mirror on, the
+      right side follows the left: LT/RT, LB/RB, Back/Start and the stick clicks match in place and size; A B X Y move
+      and size as one cluster whose centre mirrors the left stick; the right stick mirrors the D-pad.</p>
+    <div class="stage" id="stage" tabindex="0" aria-label="Layout editor"></div>
     <div class="inspector" id="inspector" hidden>
       <strong id="i-name"></strong>
-      <label class="field">Size <input id="i-size" type="range" min="3" max="40" step="0.5"></label>
-      <label class="field" id="i-wide-f">Width <input id="i-wide" type="range" min="1" max="4" step="0.1"></label>
+      <label class="field">Size <span class="num"><input id="i-size-n" type="number" min="3" max="40" step="0.5"> %</span>
+        <input id="i-size" type="range" min="3" max="40" step="0.5"></label>
+      <label class="field" id="i-wide-f">Width <span class="num"><input id="i-wide-n" type="number" min="1" max="4" step="0.1"> ×</span>
+        <input id="i-wide" type="range" min="1" max="4" step="0.1"></label>
+      <label class="field" id="i-spread-f">Spread <span class="num"><input id="i-spread-n" type="number" min="5" max="30" step="0.5"> %</span>
+        <input id="i-spread" type="range" min="5" max="30" step="0.5"></label>
+      <label class="field">Position <span class="num">x <input id="i-x" type="number" min="0" max="100" step="0.5"> %
+        &nbsp; y <input id="i-y" type="number" min="0" max="100" step="0.5"> %</span></label>
       <label class="check"><input id="i-on" type="checkbox"> On the pad</label>
     </div>
     <div class="row actions">

@@ -150,6 +150,19 @@ input[type="range"] { accent-color: var(--a); min-width: 9rem; }
   margin: .7rem 0; padding: .8rem 1rem; background: var(--shell-2); border: 1px solid var(--seam); border-radius: .8rem;
 }
 .inspector strong { align-self: center; min-width: 4rem; }
+.num { display: inline-flex; align-items: center; gap: .3rem; color: var(--carbon); }
+input[type="number"] {
+  font: inherit; color: var(--carbon); background: #fff; width: 4.6rem;
+  border: 1px solid var(--seam); border-radius: .5rem; padding: .2rem .4rem; min-height: 1.9rem;
+}
+.tools { align-items: center; }
+.stage.grid {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,.10) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.10) 1px, transparent 1px);
+  background-color: #3d5a46;
+  background-position: 0 0;
+}
 
 /* ---- buttons */
 button {
@@ -160,6 +173,7 @@ button.quiet { background: transparent; color: var(--carbon); border-color: var(
 button.small { min-height: 2rem; padding: .25rem .8rem; font-size: .85rem; background: var(--a); border-color: var(--a); }
 button.danger { color: var(--b); }
 button:disabled { opacity: .45; cursor: default; }
+.stage:focus-visible { outline: 3px solid var(--y); outline-offset: 2px; }
 button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
   outline: 3px solid var(--x); outline-offset: 2px;
 }

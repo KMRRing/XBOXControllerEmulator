@@ -133,6 +133,8 @@ def overlay_stop(request):
 def layouts_list(request):
     return {"layouts": list(layouts().values()), "settings": settings(),
             "catalogue": {k: {"kind": v[0], "label": v[1], "shape": v[2]} for k, v in padlib.CATALOGUE.items()},
+            "symmetry": {"twins": padlib.TWINS, "cluster": padlib.CLUSTER, "centre_twins": padlib.CENTRE_TWINS,
+                         "snap_steps": padlib.SNAP_STEPS},
             "default": padlib.clean_layout(padlib.DEFAULT)}
 
 

@@ -53,7 +53,23 @@ def test_a_layout_is_cleaned_not_trusted():
     assert "fake" not in [c["id"] for c in lay["controls"]]
     assert next(c for c in lay["controls"] if c["id"] == "menu")["on"], "the menu handle cannot be switched off"
     assert lay["id"] == "mine" and lay["name"] == "Mine!"
-    assert pad.clean_settings({"opacity": 3, "active": "My Pad"}) == {"active": "my-pad", "opacity": 1.0}
+    assert pad.clean_settings({"opacity": 3, "active": "My Pad", "snap": 2.4, "mirror": 0}) == {
+        "active": "my-pad", "opacity": 1.0, "snap": 2.5, "mirror": False}
+    assert pad.clean_settings({"snap": "off"})["snap"] == 2.5, "nonsense snaps fall back to the default step"
+
+
+def test_the_default_layout_is_already_symmetric():
+    """The editor's Mirror follows the left side with the right; a default that is not symmetric would jump
+    the first time something is dragged."""
+    lay = {c["id"]: c for c in pad.clean_layout(pad.DEFAULT)["controls"]}
+    for left, right in pad.TWINS:
+        assert lay[left]["x"] + lay[right]["x"] == pytest.approx(1.0, abs=1e-3), (left, right)
+        assert (lay[left]["y"], lay[left]["s"], lay[left]["w"]) == (lay[right]["y"], lay[right]["s"], lay[right]["w"])
+    cx = sum(lay[i]["x"] for i in pad.CLUSTER) / 4
+    cy = sum(lay[i]["y"] for i in pad.CLUSTER) / 4
+    assert lay["ls"]["x"] + cx == pytest.approx(1.0, abs=1e-3) and lay["ls"]["y"] == pytest.approx(cy, abs=1e-3)
+    assert lay["dpad"]["x"] + lay["rs"]["x"] == pytest.approx(1.0, abs=1e-3) and lay["dpad"]["y"] == lay["rs"]["y"]
+    assert len({lay[i]["s"] for i in pad.CLUSTER}) == 1, "the face buttons are one size"
 
 
 def test_a_finger_on_a_button_presses_it_and_lifting_releases_it(p):
@@ -243,8 +259,9 @@ def test_deleting_a_layout_leaves_a_tombstone_the_sync_can_carry(app):
 def test_settings_are_checked(app):
     call, _ = app
     assert call("/api/settings", {"active": "nowhere"})[0] == 404
-    status, body = call("/api/settings", {"opacity": 0.4})
-    assert status == 200 and body["settings"] == {"active": "default", "opacity": 0.4}
+    status, body = call("/api/settings", {"opacity": 0.4, "snap": 5})
+    assert status == 200 and body["settings"] == {"active": "default", "opacity": 0.4, "snap": 5.0, "mirror": True}
+    assert call("/api/layouts")[1]["symmetry"]["cluster"] == list(pad.CLUSTER)
     assert call("/api/layouts/save", {"layout": {"controls": []}})[0] == 400, "a layout needs a name"
 
 

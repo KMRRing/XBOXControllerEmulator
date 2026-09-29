@@ -60,16 +60,24 @@ DEFAULT = {
         _c("rt", 0.925, 0.09, 0.075, 1.8), _c("rb", 0.925, 0.20, 0.075, 1.8),
         _c("back", 0.42, 0.07, 0.06, 1.7), _c("menu", 0.50, 0.07, 0.07), _c("start", 0.58, 0.07, 0.06, 1.7),
         _c("guide", 0.50, 0.93, 0.06, on=False),
-        _c("ls", 0.14, 0.60, 0.26), _c("l3", 0.27, 0.40, 0.075),
+        _c("ls", 0.135, 0.56, 0.26), _c("l3", 0.27, 0.36, 0.075),
         _c("dpad", 0.30, 0.82, 0.21),
-        _c("rs", 0.68, 0.79, 0.22), _c("r3", 0.57, 0.63, 0.075),
-        _c("y", 0.870, 0.44, 0.105), _c("x", 0.797, 0.56, 0.105),
-        _c("b", 0.943, 0.56, 0.105), _c("a", 0.870, 0.68, 0.105),
+        _c("rs", 0.70, 0.82, 0.22), _c("r3", 0.73, 0.36, 0.075),
+        _c("y", 0.865, 0.44, 0.105), _c("x", 0.785, 0.56, 0.105),
+        _c("b", 0.945, 0.56, 0.105), _c("a", 0.865, 0.68, 0.105),
     ],
 }
 
-SETTINGS = {"active": "default", "opacity": 0.6}
+# The editor's symmetry: each left control and the right one that follows it. TWINS match position, size and
+# width; CENTRE_TWINS match position only. The face buttons move and size as one cluster; their centre is what
+# mirrors the left stick, the way an Xbox pad is laid out (stick opposite the face buttons, D-pad opposite the
+# right stick).
+TWINS = (("lt", "rt"), ("lb", "rb"), ("back", "start"), ("l3", "r3"))
+CLUSTER = ("a", "b", "x", "y")
+CENTRE_TWINS = (("ls", "cluster"), ("dpad", "rs"))
+SNAP_STEPS = (0.0, 1.0, 2.5, 5.0)                 # per cent of the screen's short side; 0 is off
 
+SETTINGS = {"active": "default", "opacity": 0.6, "snap": 2.5, "mirror": True}
 
 # --------------------------------------------------------------------------------- layouts
 def slug(name: str) -> str:
@@ -104,8 +112,11 @@ def clean_layout(raw) -> dict:
 
 def clean_settings(raw) -> dict:
     raw = raw if isinstance(raw, dict) else {}
+    snap = _num(raw.get("snap"), 0.0, 5.0, SETTINGS["snap"])
     return {"active": slug(raw.get("active") or SETTINGS["active"]),
-            "opacity": round(_num(raw.get("opacity"), 0.25, 1.0, SETTINGS["opacity"]), 2)}
+            "opacity": round(_num(raw.get("opacity"), 0.25, 1.0, SETTINGS["opacity"]), 2),
+            "snap": min(SNAP_STEPS, key=lambda step: abs(step - snap)),
+            "mirror": bool(raw.get("mirror", SETTINGS["mirror"]))}
 
 
 # --------------------------------------------------------------------------------- geometry
