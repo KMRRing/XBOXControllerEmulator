@@ -53,8 +53,8 @@ def test_a_layout_is_cleaned_not_trusted():
     assert "fake" not in [c["id"] for c in lay["controls"]]
     assert next(c for c in lay["controls"] if c["id"] == "menu")["on"], "the menu handle cannot be switched off"
     assert lay["id"] == "mine" and lay["name"] == "Mine!"
-    assert pad.clean_settings({"opacity": 3, "active": "My Pad", "snap": 2.4, "mirror": 0}) == {
-        "active": "my-pad", "opacity": 1.0, "snap": 2.5, "mirror": False}
+    assert pad.clean_settings({"opacity": 3, "active": "My Pad", "snap": 2.4, "mirror": 0, "speed": 40, "idle": "x"}) == {
+        "active": "my-pad", "opacity": 1.0, "snap": 2.5, "mirror": False, "speed": 10, "idle": 1.0, "floating": False}
     assert pad.clean_settings({"snap": "off"})["snap"] == 2.5, "nonsense snaps fall back to the default step"
 
 
@@ -161,6 +161,101 @@ def test_a_layout_keeps_its_proportions_on_another_screen():
     assert (a.cx, a.cy, a.h) == (2 * b.cx, 2 * b.cy, 2 * b.h)
 
 
+def tp(on: bool = True, **extra) -> pad.Pad:
+    """A pad with the trackpad, the mouse buttons and the keys switched on."""
+    lay = pad.clean_layout({"name": "mouse", "controls": [{"id": i, "on": True, **DEF[i]} for i in
+                                                          ("trackpad", "lmb", "rmb", "k1", "k2")]})
+    return pad.Pad(lay, W, H, extra)
+
+
+DEF = {c["id"]: {k: v for k, v in c.items() if k not in ("id", "on")} for c in pad.DEFAULT["controls"]}
+
+
+def test_the_trackpad_moves_the_cursor_with_the_finger_faster_when_the_finger_is_fast():
+    p = tp(speed=5)
+    x, y, _ = centre(p.layout, "trackpad")
+    p.down(1, x, y, 0.0)
+    p.move(1, x + 2, y + 1)
+    (kind, dx, dy), = p.take_events()
+    assert kind == "move" and 4 <= dx <= 6 and 2 <= dy <= 3, "a slow finger: about 0.4 x speed pixels per pixel"
+    p.move(1, x + 42, y + 1)
+    (kind, fdx, _), = p.take_events()
+    assert kind == "move" and fdx > 2 * 2 * 40, "a fast finger gets up to three times that"
+    assert p.report() == pad.blank(), "the trackpad is not a gamepad control"
+    p.up(1, 1.0)
+    assert p.take_events() == [], "a finger that travelled did not tap"
+
+
+def test_a_tap_clicks_and_a_quick_return_drags():
+    p = tp()
+    x, y, _ = centre(p.layout, "trackpad")
+    p.down(1, x, y, 0.0)
+    p.up(1, 0.1)
+    assert p.take_events() == [("click", "left")]
+    p.down(1, x, y, 0.2)                                       # back down within the window: hold the button
+    p.move(1, x + 30, y)
+    p.up(1, 0.9)
+    ev = p.take_events()
+    assert ev[0] == ("down", "left") and ev[-1] == ("up", "left") and any(e[0] == "move" for e in ev)
+    p.down(1, x, y, 5.0)                                       # a plain touch much later, held too long
+    p.up(1, 5.6)
+    assert p.take_events() == [], "a long press is not a tap"
+
+
+def test_two_fingers_tap_for_the_right_button_and_scroll_when_they_travel():
+    p = tp()
+    x, y, size = centre(p.layout, "trackpad")
+    p.down(1, x - 20, y, 0.0)
+    p.down(2, x + 20, y, 0.02)
+    p.up(1, 0.1)
+    p.up(2, 0.12)
+    assert p.take_events() == [("click", "right")], "one right click for two fingers, not two"
+    p.down(1, x - 20, y, 1.0)
+    p.down(2, x + 20, y, 1.0)
+    notch = pad.SCROLL_NOTCH * min(W, H)
+    p.move(1, x - 20, y + notch * 2.5)
+    assert p.take_events() == [("wheel", 2)], "finger down, content down"
+    p.move(2, x + 20, y - notch * 3)
+    assert p.take_events() == [("wheel", -2)], "the half notch left over carries"
+    p.up(1, 2.0)
+    p.up(2, 2.0)
+    assert p.take_events() == [], "fingers that scrolled did not tap"
+
+
+def test_the_mouse_buttons_and_the_keys_press_and_release():
+    p = tp()
+    lx, ly, _ = centre(p.layout, "lmb")
+    kx, ky, _ = centre(p.layout, "k1")
+    p.down(1, lx, ly, 0.0)
+    p.down(2, kx, ky, 0.0)
+    assert p.take_events() == [("down", "left"), ("keydown", "Escape")]
+    assert p.report() == pad.blank(), "mouse buttons and keys are not gamepad buttons"
+    p.up(2, 0.5)
+    p.up(1, 0.6)
+    assert p.take_events() == [("keyup", "Escape"), ("up", "left")]
+    p.down(3, kx, ky, 1.0)
+    p.take_events()
+    p.toggle()                                                 # hiding the pad lets go in the game too
+    assert p.take_events() == [("keyup", "Escape")]
+
+
+def test_a_key_control_takes_only_a_known_key():
+    lay = pad.clean_layout({"name": "k", "controls": [{"id": "k1", "key": "F5"}, {"id": "k2", "key": "Meta"}]})
+    keys = {c["id"]: c.get("key") for c in lay["controls"]}
+    assert keys["k1"] == "F5" and keys["k2"] == "Space" and keys["a"] is None
+    assert pad.KEYS["F5"] == 0x74 and pad.KEYS["A"] == 0x41 and pad.KEYS["7"] == 0x37
+
+
+def test_a_floating_stick_centres_where_the_finger_lands():
+    p = pad.Pad(pad.DEFAULT, W, H, {"floating": True})
+    x, y, size = centre(p.layout, "ls")
+    r = size / 2
+    p.down(1, x + r * 0.9, y, 0.0)                             # near the rim, but that is the new centre
+    assert p.report()["lx"] == 0
+    p.move(1, x + r * 0.9 + r * pad.STICK_THROW / 2, y)
+    assert p.report()["lx"] == pytest.approx(16384, abs=2)
+
+
 # --------------------------------------------------------------------------------- the driver's wire format
 def test_the_structures_match_the_drivers_headers():
     """Sizes and codes as ViGEmBus defines them (BusShared.h); a byte off and the driver rejects the request."""
@@ -260,8 +355,10 @@ def test_settings_are_checked(app):
     call, _ = app
     assert call("/api/settings", {"active": "nowhere"})[0] == 404
     status, body = call("/api/settings", {"opacity": 0.4, "snap": 5})
-    assert status == 200 and body["settings"] == {"active": "default", "opacity": 0.4, "snap": 5.0, "mirror": True}
-    assert call("/api/layouts")[1]["symmetry"]["cluster"] == list(pad.CLUSTER)
+    assert status == 200 and body["settings"] == {"active": "default", "opacity": 0.4, "snap": 5.0, "mirror": True,
+                                                  "speed": 5, "idle": 1.0, "floating": False}
+    listing = call("/api/layouts")[1]
+    assert listing["symmetry"]["cluster"] == list(pad.CLUSTER) and "Escape" in listing["keys"]
     assert call("/api/layouts/save", {"layout": {"controls": []}})[0] == 400, "a layout needs a name"
 
 

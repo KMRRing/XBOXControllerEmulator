@@ -10,7 +10,9 @@ const slug = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 const copy = (o) => JSON.parse(JSON.stringify(o));
 
 const NAMES = { ls: "Left stick", rs: "Right stick", dpad: "D-pad", a: "A", b: "B", x: "X", y: "Y", lb: "LB", rb: "RB",
-  lt: "LT", rt: "RT", back: "Back", start: "Start", guide: "Xbox", l3: "LS click", r3: "RS click", menu: "Hide / Pad" };
+  lt: "LT", rt: "RT", back: "Back", start: "Start", guide: "Xbox", l3: "LS click", r3: "RS click", menu: "Hide / Pad",
+  trackpad: "Trackpad", lmb: "Left mouse button", rmb: "Right mouse button", k1: "Key 1", k2: "Key 2", k3: "Key 3", k4: "Key 4" };
+let keys = [];
 const BITS = [["a", 0x1000, "A"], ["b", 0x2000, "B"], ["x", 0x4000, "X"], ["y", 0x8000, "Y"], ["lb", 0x100, "LB"],
   ["rb", 0x200, "RB"], ["lt", 0, "LT"], ["rt", 0, "RT"], ["back", 0x20, "Back"], ["start", 0x10, "Start"],
   ["guide", 0x400, "Xbox"], ["l3", 0x40, "LS"], ["r3", 0x80, "RS"], ["up", 1, "↑"], ["down", 2, "↓"],
@@ -206,7 +208,7 @@ function drawStage() {
     const cat = catalogue[c.id], el = document.createElement("div");
     el.className = `ctl ${cat.shape}${cat.kind === "stick" ? " stick-base" : ""}`;
     el.dataset.id = c.id;
-    el.textContent = cat.kind === "menu" ? "Hide" : cat.label;
+    el.textContent = cat.kind === "menu" ? "Hide" : cat.kind === "key" ? c.key : cat.kind === "trackpad" ? "trackpad" : cat.label;
     el.setAttribute("aria-label", NAMES[c.id]);
     place(el, c);
     el.addEventListener("pointerdown", (e) => grab(e, c, el));
@@ -259,6 +261,8 @@ function inspect() {
   $("#i-wide-f").hidden = shape !== "rect";
   $("#i-spread-f").hidden = !cluster;
   if (cluster) $("#i-spread").value = $("#i-spread-n").value = Math.round(clusterSpread() * 2) / 2;
+  $("#i-key-f").hidden = catalogue[c.id].kind !== "key";
+  if (catalogue[c.id].kind === "key") $("#i-key").value = c.key;
   $("#i-x").value = Math.round(c.x * 1000) / 10;
   $("#i-y").value = Math.round(c.y * 1000) / 10;
   $("#i-on").checked = c.on;
@@ -283,6 +287,11 @@ bindPair("#i-spread", "#i-spread-n", (v) => { setClusterSpread(Math.min(30, Math
 $("#i-x").onchange = (e) => { const p = toPx(ctl(sel)); nudgeTo(clamp01(+e.target.value / 100) * screen().w, p.y); };
 $("#i-y").onchange = (e) => { const p = toPx(ctl(sel)); nudgeTo(p.x, clamp01(+e.target.value / 100) * screen().h); };
 $("#i-on").onchange = (e) => { for (const k of movingSet(sel)) k.on = e.target.checked; changed(); };
+$("#i-key").onchange = (e) => {
+  ctl(sel).key = e.target.value;
+  document.querySelector(`.ctl[data-id="${sel}"]`).textContent = e.target.value;
+  changed();
+};
 
 function nudgeTo(x, y) {
   const c = ctl(sel), from = toPx(c), dx = x - from.x, dy = y - from.y;
@@ -320,6 +329,8 @@ async function loadLayouts(pick) {
   const j = await (await fetch("/api/layouts")).json();
   catalogue = j.catalogue;
   symmetry = j.symmetry;
+  keys = j.keys;
+  $("#i-key").innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
   all = j.layouts;
   settings = j.settings;
   const want = pick || settings.active;
@@ -327,6 +338,11 @@ async function loadLayouts(pick) {
   $("#layout").value = all.some((l) => l.id === want) ? want : "default";
   $("#opacity").value = Math.round(settings.opacity * 100);
   $("#op-out").textContent = `${Math.round(settings.opacity * 100)} %`;
+  $("#idle").value = Math.round(settings.idle * 100);
+  $("#idle-out").textContent = `${Math.round(settings.idle * 100)} %`;
+  $("#speed").value = settings.speed;
+  $("#speed-out").textContent = settings.speed;
+  $("#floating").checked = settings.floating;
   $("#snap").innerHTML = symmetry.snap_steps.map((s) => `<option value="${s}">${s ? `${s} %` : "Off"}</option>`).join("");
   $("#snap").value = String(settings.snap);
   $("#mirror").checked = settings.mirror;
@@ -351,6 +367,11 @@ $("#layout").onchange = async (e) => {
 
 $("#opacity").oninput = (e) => { $("#op-out").textContent = `${e.target.value} %`; };
 $("#opacity").onchange = (e) => setting({ opacity: +e.target.value / 100 });
+$("#idle").oninput = (e) => { $("#idle-out").textContent = `${e.target.value} %`; };
+$("#idle").onchange = (e) => setting({ idle: +e.target.value / 100 });
+$("#speed").oninput = (e) => { $("#speed-out").textContent = e.target.value; };
+$("#speed").onchange = (e) => setting({ speed: +e.target.value });
+$("#floating").onchange = (e) => setting({ floating: e.target.checked });
 $("#snap").onchange = async (e) => { await setting({ snap: +e.target.value }); paintGrid(); };
 $("#mirror").onchange = async (e) => {
   await setting({ mirror: e.target.checked });

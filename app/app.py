@@ -77,8 +77,7 @@ def active() -> tuple:
 
 def refresh_overlay() -> None:
     if OVERLAY.running:
-        layout, s = active()
-        OVERLAY.reload(layout, s["opacity"])
+        OVERLAY.reload(*active())
 
 
 # --------------------------------------------------------------------------------- the driver
@@ -119,8 +118,7 @@ def driver_install(request):
 
 @frame.route("POST", "/api/overlay/start")
 def overlay_start(request):
-    layout, s = active()
-    result = OVERLAY.start(layout, s["opacity"])
+    result = OVERLAY.start(*active())
     return result if result.get("ok") else (409, result)
 
 
@@ -135,6 +133,7 @@ def layouts_list(request):
             "catalogue": {k: {"kind": v[0], "label": v[1], "shape": v[2]} for k, v in padlib.CATALOGUE.items()},
             "symmetry": {"twins": padlib.TWINS, "cluster": padlib.CLUSTER, "centre_twins": padlib.CENTRE_TWINS,
                          "snap_steps": padlib.SNAP_STEPS},
+            "keys": list(padlib.KEYS),
             "default": padlib.clean_layout(padlib.DEFAULT)}
 
 

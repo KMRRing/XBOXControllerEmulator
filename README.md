@@ -25,7 +25,14 @@ that everything not a control is simply not there — the game gets those touche
 messages so that every finger is its own input. It re-asserts itself on top every two seconds.
 
 `app/pad.py` is the part in between: what a finger on a stick means, how far the stick moves, how a finger
-slides from A to B, which of eight directions a thumb on the D-pad points. Pure Python, tested anywhere.
+slides from A to B, which of eight directions a thumb on the D-pad points, what a tap, a two-finger tap and a
+tap-then-drag on the trackpad ask of the mouse. Pure Python, tested anywhere.
+
+The trackpad, the mouse buttons and the key buttons do not go through the controller: the overlay injects them
+as mouse and keyboard input (`SendInput`) wherever the cursor is, which is how games whose own touch handling is
+broken — Slay the Spire is one — are still played. Cursor moves are sent as absolute positions, so the pointer
+speed is the pad's own and Windows' pointer acceleration does not double it. When the cursor happens to be over
+one of the pad's own controls, the overlay makes itself click-through for the instant the click is injected.
 
 Exclusive fullscreen is the one thing no overlay can draw over. Games go in borderless or windowed mode.
 
@@ -37,6 +44,14 @@ Exclusive fullscreen is the one thing no overlay can draw over. Games go in bord
   and Install. Once.
 * **What the game sees.** The live controller state, so a game's dead input is diagnosed here and not in the
   game.
+* **Ghost mode.** *Idle controls* below 100 % fades every control to that much of the opacity until a finger is
+  on it; at 0 % the pad is invisible until touched. Under the hood that is two windows: one carrying every
+  control at the idle opacity (never fully transparent, because a transparent pixel cannot be touched), and one
+  on top drawing only the controls in use at full opacity.
+* **Trackpad, mouse buttons, keys.** Off by default; switched on per layout. Drag moves the cursor, tap clicks,
+  two fingers tap for a right click, tap and go straight back down to drag, two fingers up and down scroll.
+  LMB and RMB are for holding while the trackpad moves. K1–K4 each send one key, chosen from a list. *Pointer
+  speed* and *Floating sticks* (a stick centres wherever the thumb lands) are settings.
 * **Layout.** Drag controls, size them by number, switch any of them off. A snap grid (1, 2.5 or 5 % of the
   screen's short side) keeps positions on a lattice; arrow keys nudge by one step. With *Mirror* on, the right
   side follows the left: LT/RT, LB/RB, Back/Start and the stick clicks match in place and size; A B X Y move and
@@ -65,7 +80,8 @@ Under `<home>/data`, where home is `%LOCALAPPDATA%\XBOXControllerEmulator`:
     layouts/<id>.json   one file per layout — the sync is newest-wins per file, so layouts never clobber each
                         other. layouts/default.json, if present, overrides the built-in default.
                         A deleted layout is a tombstone {"deleted": true}: the sync carries files, never deletions.
-    settings.json       the active layout and the opacity.
+    settings.json       the active layout, the opacity, the idle opacity, the pointer speed, floating sticks,
+                        and the editor's snap and mirror.
 
 Kilobytes, and nothing secret.
 

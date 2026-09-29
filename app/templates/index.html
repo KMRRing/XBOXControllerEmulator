@@ -44,7 +44,17 @@
         <select id="layout"></select></label>
       <label class="field">Opacity <output id="op-out"></output>
         <input id="opacity" type="range" min="25" max="100" step="5"></label>
+      <label class="field">Idle controls <output id="idle-out"></output>
+        <input id="idle" type="range" min="0" max="100" step="5"></label>
+      <label class="field">Pointer speed <output id="speed-out"></output>
+        <input id="speed" type="range" min="1" max="10" step="1"></label>
+      <label class="check"><input id="floating" type="checkbox"> Floating sticks</label>
     </div>
+    <p class="hint">Idle controls below 100 % is the ghost mode: a control fades to that much of the opacity until a
+      finger is on it, 0 % being invisible. Floating sticks centre wherever the thumb lands. The trackpad, the mouse
+      buttons and the keys K1–K4 are off until you switch them on below: on the trackpad, drag moves the cursor,
+      tap clicks, two fingers tap for a right click, tap and go straight back down to drag, two fingers up and
+      down scroll.</p>
     <div class="row tools">
       <label class="field">Snap to a grid
         <select id="snap"></select></label>
@@ -64,6 +74,8 @@
         <input id="i-spread" type="range" min="5" max="30" step="0.5"></label>
       <label class="field">Position <span class="num">x <input id="i-x" type="number" min="0" max="100" step="0.5"> %
         &nbsp; y <input id="i-y" type="number" min="0" max="100" step="0.5"> %</span></label>
+      <label class="field" id="i-key-f">Key
+        <select id="i-key"></select></label>
       <label class="check"><input id="i-on" type="checkbox"> On the pad</label>
     </div>
     <div class="row actions">
