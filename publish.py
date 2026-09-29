@@ -158,9 +158,17 @@ def publish(tag: str, notes: str, tok: str) -> str:
     git("add", "app/VERSION", "launcher.py", "Start.bat", "Start.command")
     if git("status", "--porcelain", "app/VERSION", "launcher.py", "Start.bat", "Start.command"):
         git(*signature(), "commit", "-q", "-m", f"release {tag}")
-    git(*signature(), "tag", "-a", tag, "-m", f"{app['name']} {tag}")
     remote = f"https://x-access-token:{tok}@github.com/{app['repo']}.git"
     branch = git("rev-parse", "--abbrev-ref", "HEAD") or "main"
+    # Every device that closes the app commits its data (repo-data/) to this branch, so GitHub is usually ahead
+    # by a few data commits. They touch nothing of the code: take them, and put the release on top.
+    try:
+        git("fetch", "-q", remote, branch)
+    except RuntimeError:
+        pass                                                   # a first push: nothing there yet
+    else:
+        git("rebase", "-q", "FETCH_HEAD")
+    git(*signature(), "tag", "-a", tag, "-m", f"{app['name']} {tag}")
     git("push", "-q", remote, f"HEAD:{branch}")
     git("push", "-q", remote, tag)
     release = gh("POST", f"{API}/repos/{app['repo']}/releases", tok,
