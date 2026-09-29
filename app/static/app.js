@@ -10,9 +10,11 @@ const slug = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(
 const copy = (o) => JSON.parse(JSON.stringify(o));
 
 const NAMES = { ls: "Left stick", rs: "Right stick", dpad: "D-pad", a: "A", b: "B", x: "X", y: "Y", lb: "LB", rb: "RB",
-  lt: "LT", rt: "RT", back: "Back", start: "Start", guide: "Xbox", l3: "LS click", r3: "RS click", menu: "Hide / Pad",
-  trackpad: "Trackpad", lmb: "Left mouse button", rmb: "Right mouse button", k1: "Key 1", k2: "Key 2", k3: "Key 3", k4: "Key 4" };
-let keys = [];
+  lt: "LT", rt: "RT", back: "Back", start: "Start", guide: "Xbox", l3: "LS click", r3: "RS click", menu: "On/Off handle",
+  trackpad: "Trackpad", lmb: "Left mouse button", rmb: "Right mouse button" };
+const KEY = { kind: "key", label: "", shape: "rect" };           // key buttons are added: ids k1..k24
+const MODIFIERS = ["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight"];
+let codes = [], LABEL = {}, maxKeys = 24;
 const BITS = [["a", 0x1000, "A"], ["b", 0x2000, "B"], ["x", 0x4000, "X"], ["y", 0x8000, "Y"], ["lb", 0x100, "LB"],
   ["rb", 0x200, "RB"], ["lt", 0, "LT"], ["rt", 0, "RT"], ["back", 0x20, "Back"], ["start", 0x10, "Start"],
   ["guide", 0x400, "Xbox"], ["l3", 0x40, "LS"], ["r3", 0x80, "RS"], ["up", 1, "↑"], ["down", 2, "↓"],
@@ -65,6 +67,9 @@ function paintStatus(s) {
 
 function paintMode() {
   const touch = mode() === "screen";
+  for (const el of document.querySelectorAll(".pad-only")) el.hidden = touch;
+  for (const el of document.querySelectorAll(".screen-only")) el.hidden = !touch;
+  $("#edit-title").textContent = touch ? "Full-screen touch layout" : "Controller layout";
   for (const r of document.querySelectorAll('input[name="mode"]')) r.checked = r.value === mode();
   $("#hold-f").hidden = !touch;
   $("#hint-pad").hidden = touch;
@@ -75,7 +80,12 @@ function paintMode() {
 }
 
 for (const r of document.querySelectorAll('input[name="mode"]')) {
-  r.onchange = async () => { await setting({ mode: r.value }); paintMode(); };
+  r.onchange = async () => {
+    if (dirty && !confirm("Drop the unsaved changes to this layout?")) { paintMode(); return; }
+    await setting({ mode: r.value });
+    sel = null;
+    await loadLayouts();                                           // the other mode's layouts, and its active one
+  };
 }
 $("#hold").oninput = (e) => { $("#hold-out").textContent = `${Number(e.target.value).toFixed(1)} s`; };
 $("#hold").onchange = (e) => setting({ hold: +e.target.value });
@@ -136,6 +146,8 @@ async function pollPad() {
 let symmetry = { twins: [], cluster: [], centre_twins: [], snap_steps: [0, 1, 2.5, 5] };
 
 function screen() { return status && status.screen ? status.screen : { w: 1500, h: 1000 }; }
+const cat = (id) => catalogue[id] || KEY;
+const nameOf = (c) => (cat(c.id).kind === "key" ? `Key ${c.label}` : NAMES[c.id] || c.id);
 const unit = () => Math.min(screen().w, screen().h);
 const gridPx = () => (settings.snap || 0) / 100 * unit();
 const toPx = (c) => ({ x: c.x * screen().w, y: c.y * screen().h });
@@ -206,7 +218,7 @@ function follow(id) {
 }
 
 function place(el, c) {
-  const { w, h } = screen(), shape = catalogue[c.id].shape;
+  const { w, h } = screen(), shape = cat(c.id).shape;
   el.style.left = `${c.x * 100}%`;
   el.style.top = `${c.y * 100}%`;
   el.style.width = `${(c.s * unit() * (shape === "rect" ? c.w : 1)) / w * 100}%`;
@@ -230,11 +242,13 @@ function drawStage() {
   const stage = $("#stage");
   stage.innerHTML = "";
   for (const c of edit.controls) {
-    const cat = catalogue[c.id], el = document.createElement("div");
-    el.className = `ctl ${cat.shape}${cat.kind === "stick" ? " stick-base" : ""}`;
+    const k = cat(c.id), el = document.createElement("div");
+    el.className = `ctl ${k.shape}${k.kind === "stick" ? " stick-base" : ""}`;
     el.dataset.id = c.id;
-    el.textContent = cat.kind === "menu" ? "Hide" : cat.kind === "key" ? c.key : cat.kind === "trackpad" ? "trackpad" : cat.label;
-    el.setAttribute("aria-label", NAMES[c.id]);
+    el.textContent = k.kind === "menu" ? (mode() === "screen" ? "Off" : "Hide") : k.kind === "key" ? c.label
+      : k.kind === "trackpad" ? "trackpad" : k.label;
+    el.setAttribute("aria-label", nameOf(c));
+    if (k.kind === "key" && c.label.length > 3) el.style.fontSize = "0.8em";
     place(el, c);
     el.addEventListener("pointerdown", (e) => grab(e, c, el));
     stage.appendChild(el);
@@ -244,6 +258,7 @@ function drawStage() {
 }
 
 function select(id) {
+  if (id !== sel) stopRecording();                               // a recording belongs to the key it started on
   sel = id;
   placeAll();
   inspect();
@@ -278,20 +293,28 @@ function grab(e, c, el) {
 function inspect() {
   const c = edit && sel && ctl(sel);
   $("#inspector").hidden = !c;
-  if (!c) return;
-  const shape = catalogue[c.id].shape, cluster = inCluster(c.id);
-  $("#i-name").textContent = cluster ? "A B X Y" : NAMES[c.id];
+  if (!c) { stopRecording(); return; }
+  const k = cat(c.id), cluster = inCluster(c.id), key = k.kind === "key";
+  $("#i-name").textContent = cluster ? "A B X Y" : key ? "Key button" : nameOf(c);
   $("#i-size").value = $("#i-size-n").value = Math.round(c.s * 200) / 2;
   $("#i-wide").value = $("#i-wide-n").value = c.w;
-  $("#i-wide-f").hidden = shape !== "rect";
+  $("#i-wide-f").hidden = k.shape !== "rect";
   $("#i-spread-f").hidden = !cluster;
   if (cluster) $("#i-spread").value = $("#i-spread-n").value = Math.round(clusterSpread() * 2) / 2;
-  $("#i-key-f").hidden = catalogue[c.id].kind !== "key";
-  if (catalogue[c.id].kind === "key") $("#i-key").value = c.key;
   $("#i-x").value = Math.round(c.x * 1000) / 10;
   $("#i-y").value = Math.round(c.y * 1000) / 10;
+  $("#i-on-f").hidden = key || c.id === "menu";
   $("#i-on").checked = c.on;
-  $("#i-on").disabled = c.id === "menu";
+  $("#i-key-f").hidden = !key;
+  if (key) {
+    const parts = c.key.split("+"), main = parts.filter((p) => !MODIFIERS.includes(p));
+    $("#i-chord").textContent = chordLabel(c.key);
+    $("#i-key").value = main[0] || parts[parts.length - 1];
+    $("#i-ctrl").checked = parts.includes("ControlLeft");
+    $("#i-shift").checked = parts.includes("ShiftLeft");
+    $("#i-alt").checked = parts.includes("AltLeft");
+    if (document.activeElement !== $("#i-label")) $("#i-label").value = c.label;
+  }
 }
 
 function changed() {
@@ -312,10 +335,120 @@ bindPair("#i-spread", "#i-spread-n", (v) => { setClusterSpread(Math.min(30, Math
 $("#i-x").onchange = (e) => { const p = toPx(ctl(sel)); nudgeTo(clamp01(+e.target.value / 100) * screen().w, p.y); };
 $("#i-y").onchange = (e) => { const p = toPx(ctl(sel)); nudgeTo(p.x, clamp01(+e.target.value / 100) * screen().h); };
 $("#i-on").onchange = (e) => { for (const k of movingSet(sel)) k.on = e.target.checked; changed(); };
-$("#i-key").onchange = (e) => {
-  ctl(sel).key = e.target.value;
-  document.querySelector(`.ctl[data-id="${sel}"]`).textContent = e.target.value;
+
+// ---- key buttons: a key or a combination, recorded from the keyboard or picked
+const chordLabel = (chord) => chord.split("+").map((p) => LABEL[p] || p).join("+");
+
+// A button wide enough for its label: grown when a longer label arrives, never shrunk behind the user's back.
+const fitWidth = (c) => { c.w = Math.max(c.w, Math.min(4, Math.round((0.35 + 0.2 * c.label.length) * 10) / 10)); };
+
+function relabel(c) {
+  const el = document.querySelector(`.ctl[data-id="${c.id}"]`);
+  el.textContent = c.label;
+  el.style.fontSize = c.label.length > 3 ? "0.8em" : "";
+}
+
+function bind(chord, label) {
+  const c = ctl(sel);
+  if (!c || cat(c.id).kind !== "key") return;
+  c.key = chord;
+  c.label = (label || chordLabel(chord)).slice(0, 16);
+  fitWidth(c);
+  relabel(c);
+  stopRecording();
   changed();
+}
+
+function pickedChord() {
+  const main = $("#i-key").value;
+  if (MODIFIERS.includes(main)) return main;
+  return [["#i-ctrl", "ControlLeft"], ["#i-shift", "ShiftLeft"], ["#i-alt", "AltLeft"]]
+    .filter(([box]) => $(box).checked).map(([, code]) => code).concat(main).join("+");
+}
+for (const id of ["#i-key", "#i-ctrl", "#i-shift", "#i-alt"]) $(id).onchange = () => bind(pickedChord());
+$("#i-label").oninput = (e) => {
+  const c = ctl(sel);
+  c.label = e.target.value.trim().slice(0, 16) || chordLabel(c.key);
+  fitWidth(c);
+  relabel(c);
+  changed();
+};
+
+let recording = false, sawKey = false;
+function startRecording() {
+  recording = true;
+  sawKey = false;
+  $("#i-rec").textContent = "Press the keys…";
+  $("#i-rec").classList.add("rec");
+}
+function stopRecording() {
+  recording = false;
+  $("#i-rec").textContent = "Record";
+  $("#i-rec").classList.remove("rec");
+}
+$("#i-rec").onclick = () => (recording ? stopRecording() : startRecording());
+
+// While recording, every key is the answer — Escape and Tab included; the button stops it. The key's position
+// (e.code) is what gets sent back; its letter on this keyboard (e.key) is what the button is labelled with.
+document.addEventListener("keydown", (e) => {
+  if (!recording) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (MODIFIERS.includes(e.code)) return;                         // a modifier alone is decided when it comes up
+  if (!LABEL[e.code]) { note(`${e.code} is not a key the pad can send. Pick one from the list instead.`); return; }
+  sawKey = true;
+  const mods = [[e.ctrlKey, "ControlLeft"], [e.shiftKey, "ShiftLeft"], [e.altKey, "AltLeft"]].filter(([on]) => on).map(([, c]) => c);
+  const plain = e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.shiftKey && !e.altKey;
+  const main = plain ? e.key.toUpperCase() : LABEL[e.code];
+  bind([...mods, e.code].join("+"), [...mods.map((m) => LABEL[m]), main].join("+"));
+  note("");
+}, true);
+document.addEventListener("keyup", (e) => {
+  if (!recording) return;
+  e.preventDefault();
+  if (MODIFIERS.includes(e.code) && !sawKey) bind(e.code);
+}, true);
+
+// Somewhere near the middle that no control is on yet: outward from the centre along a row, then the next row.
+function freeSpot(size) {
+  const { w, h } = screen(), taken = edit.controls.filter((c) => c.on)
+    .map((c) => ({ ...toPx(c), r: (c.s * unit() * (cat(c.id).shape === "rect" ? c.w : 1)) / 2 }));
+  for (const row of [0, 1, -1, 2, -2]) {
+    for (const col of [0, 1, -1, 2, -2, 3, -3, 4, -4]) {
+      const x = snapPx(w / 2 + col * size * 1.3), y = snapPx(h / 2 + row * size * 1.3);
+      if (x < size || x > w - size || y < size || y > h - size) continue;
+      if (taken.every((t) => Math.hypot(t.x - x, t.y - y) > t.r + size * 0.6)) return { x, y };
+    }
+  }
+  return { x: w / 2, y: h / 2 };
+}
+
+function freeKeyId() {
+  const used = new Set(edit.controls.map((c) => c.id));
+  for (let n = 1; n <= maxKeys; n += 1) if (!used.has(`k${n}`)) return `k${n}`;
+  return null;
+}
+
+$("#addkey").onclick = () => {
+  const id = freeKeyId();
+  if (!id) { note(`A layout holds ${maxKeys} keys at most.`); return; }
+  const spot = freeSpot(0.08 * unit());
+  edit.controls.push({ id, x: round4(spot.x / screen().w), y: round4(spot.y / screen().h), s: 0.08, w: 1, on: true,
+    key: "Space", label: "Space" });
+  sel = id;
+  drawStage();
+  touched();
+  startRecording();
+  $("#stage").focus({ preventScroll: true });
+  note("Press the key to bind — or a combination like Ctrl+S — or pick it below.");
+};
+
+$("#i-remove").onclick = () => {
+  edit.controls = edit.controls.filter((c) => c.id !== sel);
+  sel = null;
+  stopRecording();
+  drawStage();
+  touched();
 };
 
 function nudgeTo(x, y) {
@@ -325,7 +458,7 @@ function nudgeTo(x, y) {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (!sel || !edit || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (recording || !sel || !edit || /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
   const step = (gridPx() || unit() / 200) * (e.shiftKey ? 4 : 1);
   const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
   if (!d) return;
@@ -350,17 +483,22 @@ function settle(layout) {
   drawStage();
 }
 
+const ACTIVE = { pad: "active", screen: "active_screen" };
+const layoutsOf = () => (all && all[mode()]) || [];
+
 async function loadLayouts(pick) {
   const j = await (await fetch("/api/layouts")).json();
   catalogue = j.catalogue;
   symmetry = j.symmetry;
-  keys = j.keys;
-  $("#i-key").innerHTML = keys.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
+  codes = j.codes;
+  maxKeys = j.max_keys;
+  LABEL = Object.fromEntries(codes);
+  $("#i-key").innerHTML = codes.map(([code, label]) => `<option value="${esc(code)}">${esc(label)}</option>`).join("");
   all = j.layouts;
   settings = j.settings;
-  const want = pick || settings.active;
-  $("#layout").innerHTML = all.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
-  $("#layout").value = all.some((l) => l.id === want) ? want : "default";
+  const want = pick || settings[ACTIVE[mode()]];
+  $("#layout").innerHTML = layoutsOf().map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join("");
+  $("#layout").value = layoutsOf().some((l) => l.id === want) ? want : "default";
   $("#opacity").value = Math.round(settings.opacity * 100);
   $("#op-out").textContent = `${Math.round(settings.opacity * 100)} %`;
   $("#idle").value = Math.round(settings.idle * 100);
@@ -372,7 +510,7 @@ async function loadLayouts(pick) {
   $("#snap").value = String(settings.snap);
   $("#mirror").checked = settings.mirror;
   paintMode();
-  settle(all.find((l) => l.id === $("#layout").value));
+  settle(layoutsOf().find((l) => l.id === $("#layout").value));
 }
 
 const note = (t) => { $("#editnote").textContent = t; };
@@ -385,7 +523,7 @@ async function setting(patch) {
 
 $("#layout").onchange = async (e) => {
   if (dirty && !confirm("Drop the unsaved changes to this layout?")) { e.target.value = edit.id; return; }
-  await setting({ active: e.target.value });
+  await setting({ [ACTIVE[mode()]]: e.target.value });
   sel = null;
   await loadLayouts(e.target.value);
   note("");
@@ -406,7 +544,7 @@ $("#mirror").onchange = async (e) => {
 
 $("#save").onclick = async () => {
   try {
-    const j = await post("/api/layouts/save", { layout: edit, activate: true });
+    const j = await post("/api/layouts/save", { layout: { ...edit, mode: mode() }, activate: true });
     await loadLayouts(j.layout.id);
     note(`Saved ${j.layout.name}.${status && status.overlay.running ? " The pad on screen has it already." : ""}`);
   } catch (e) { note(e.message); }
@@ -415,9 +553,9 @@ $("#save").onclick = async () => {
 $("#saveas").onclick = async () => {
   const name = $("#newname").value.trim();
   if (!name) { note("Type a name for the new layout first."); $("#newname").focus(); return; }
-  if (all.some((l) => l.id === slug(name)) && !confirm(`A layout called ${name} exists. Replace it?`)) return;
+  if (layoutsOf().some((l) => l.id === slug(name)) && !confirm(`A layout called ${name} exists. Replace it?`)) return;
   try {
-    const j = await post("/api/layouts/save", { layout: { ...edit, id: slug(name), name }, activate: true });
+    const j = await post("/api/layouts/save", { layout: { ...edit, id: slug(name), name, mode: mode() }, activate: true });
     $("#newname").value = "";
     await loadLayouts(j.layout.id);
     note(`Saved as ${j.layout.name}, and it is the active layout now.`);
@@ -430,7 +568,7 @@ $("#delete").onclick = async () => {
   const isDefault = edit.id === "default";
   if (!confirm(isDefault ? "Put the default layout back as it came?" : `Delete ${edit.name}?`)) return;
   try {
-    await post("/api/layouts/delete", { id: edit.id });
+    await post("/api/layouts/delete", { id: edit.id, mode: mode() });
     sel = null;
     await loadLayouts(isDefault ? "default" : undefined);
     note(isDefault ? "The default layout is back as it came." : "Deleted.");

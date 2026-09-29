@@ -19,6 +19,7 @@ import pytest
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "app"))
 
+import overlay  # noqa: E402
 import pad  # noqa: E402
 import vigem  # noqa: E402
 
@@ -54,8 +55,8 @@ def test_a_layout_is_cleaned_not_trusted():
     assert next(c for c in lay["controls"] if c["id"] == "menu")["on"], "the menu handle cannot be switched off"
     assert lay["id"] == "mine" and lay["name"] == "Mine!"
     assert pad.clean_settings({"opacity": 3, "active": "My Pad", "snap": 2.4, "mirror": 0, "speed": 40, "idle": "x"}) == {
-        "active": "my-pad", "opacity": 1.0, "snap": 2.5, "mirror": False, "speed": 10, "idle": 1.0, "floating": False,
-        "mode": "pad", "hold": 0.5}
+        "active": "my-pad", "active_screen": "default", "opacity": 1.0, "snap": 2.5, "mirror": False, "speed": 10,
+        "idle": 1.0, "floating": False, "mode": "pad", "hold": 0.5}
     assert pad.clean_settings({"mode": "screen", "hold": 9})["mode"] == "screen"
     assert pad.clean_settings({"mode": "desktop", "hold": 9}) | {} == pad.clean_settings({"hold": 1.5}), "unknown modes fall back"
     assert pad.clean_settings({"snap": "off"})["snap"] == 2.5, "nonsense snaps fall back to the default step"
@@ -164,10 +165,14 @@ def test_a_layout_keeps_its_proportions_on_another_screen():
     assert (a.cx, a.cy, a.h) == (2 * b.cx, 2 * b.cy, 2 * b.h)
 
 
-def tp(on: bool = True, **extra) -> pad.Pad:
-    """A pad with the trackpad, the mouse buttons and the keys switched on."""
+KEY1 = {"id": "k1", "key": "Escape", "x": 0.40, "y": 0.24, "s": 0.065}
+KEY2 = {"id": "k2", "key": "ControlLeft+KeyS", "x": 0.47, "y": 0.24, "s": 0.065}
+
+
+def tp(**extra) -> pad.Pad:
+    """A pad with the trackpad and the mouse buttons switched on, and two key buttons."""
     lay = pad.clean_layout({"name": "mouse", "controls": [{"id": i, "on": True, **DEF[i]} for i in
-                                                          ("trackpad", "lmb", "rmb", "k1", "k2")]})
+                                                          ("trackpad", "lmb", "rmb")] + [KEY1, KEY2]})
     return pad.Pad(lay, W, H, extra)
 
 
@@ -245,11 +250,40 @@ def test_the_mouse_buttons_and_the_keys_press_and_release():
     assert p.take_events() == [("keyup", "Escape")]
 
 
-def test_a_key_control_takes_only_a_known_key():
-    lay = pad.clean_layout({"name": "k", "controls": [{"id": "k1", "key": "F5"}, {"id": "k2", "key": "Meta"}]})
-    keys = {c["id"]: c.get("key") for c in lay["controls"]}
-    assert keys["k1"] == "F5" and keys["k2"] == "Space" and keys["a"] is None
-    assert pad.KEYS["F5"] == 0x74 and pad.KEYS["A"] == 0x41 and pad.KEYS["7"] == 0x37
+def test_a_key_button_holds_a_key_or_a_combination_it_can_send():
+    assert pad.clean_chord("KeyS+ControlLeft") == "ControlLeft+KeyS", "modifiers first, in a fixed order"
+    assert pad.clean_chord("AltLeft+ShiftLeft+ControlLeft+Digit1") == "ControlLeft+ShiftLeft+AltLeft+Digit1"
+    assert pad.clean_chord("ShiftRight") == "ShiftRight", "a modifier alone is a key too"
+    assert pad.clean_chord("KeyA+KeyB") is None, "one key besides the modifiers"
+    assert pad.clean_chord("MetaLeft") is None and pad.clean_chord("") is None and pad.clean_chord(7) is None
+    assert pad.clean_chord("Ctrl+Up") == "ControlLeft+ArrowUp", "the key names of v0.3/v0.4 carry over"
+    assert pad.chord_label("ControlLeft+ShiftLeft+KeyS") == "Ctrl+Shift+S"
+
+
+def test_key_buttons_are_added_and_removed_and_old_unused_ones_are_dropped():
+    lay = pad.clean_layout({"name": "k", "controls": [
+        {"id": "k1", "key": "Escape", "on": False},                  # a v0.3 layout's unused key: dropped
+        {"id": "k2", "key": "F5"},
+        {"id": "k9", "key": "Nonsense", "label": "Hmm"},              # not sendable: Space, and its own label
+        {"id": "k25", "key": "Space"},                                # beyond the 24 a layout can hold
+        {"id": "k3", "key": "ControlLeft+KeyZ", "label": "Undo", "x": 0.2, "w": 2}]})
+    keys = [c for c in lay["controls"] if c["id"].startswith("k")]
+    assert [(c["id"], c["key"], c["label"]) for c in keys] == [("k2", "F5", "F5"), ("k3", "ControlLeft+KeyZ", "Undo"),
+                                                               ("k9", "Space", "Space")]
+    assert keys[1]["x"] == 0.2 and keys[1]["w"] == 2 and all(c["on"] for c in keys)
+    p = pad.Pad(lay, W, H)
+    k3 = p.by_id["k3"]
+    assert (k3.kind, k3.shape, k3.label) == ("key", "rect", "Undo")
+
+
+def test_a_combination_goes_down_modifiers_first_and_comes_up_in_reverse():
+    """The overlay sends scan codes — the key's position — with the extended flag where the keyboard would."""
+    recs = overlay.inputs_for([("keydown", "ControlLeft+KeyS"), ("keyup", "ControlLeft+KeyS"), ("keydown", "ArrowUp")])
+    got = [(r.type, r.u.ki.wScan, r.u.ki.dwFlags) for r in recs]
+    SC, UP, EXT = overlay.KEY_SCANCODE, overlay.KEY_UP, overlay.KEY_EXTENDED
+    assert got == [(1, 0x1D, SC), (1, 0x1F, SC), (1, 0x1F, SC | UP), (1, 0x1D, SC | UP), (1, 0x48, SC | EXT)]
+    assert (ctypes.sizeof(overlay.INPUT), ctypes.sizeof(overlay.MOUSEINPUT), ctypes.sizeof(overlay.KEYBDINPUT)) == \
+        (40, 32, 24), "SendInput checks the record size: Windows x64's"
 
 
 def test_a_floating_stick_centres_where_the_finger_lands():
@@ -264,9 +298,16 @@ def test_a_floating_stick_centres_where_the_finger_lands():
 
 # --------------------------------------------------------------------------------- full-screen touch
 def screen(**extra) -> pad.Pad:
-    """Full-screen touch, with key button K1 switched on."""
-    lay = pad.clean_layout({"name": "s", "controls": [{"id": "k1", "on": True, **DEF["k1"]}]})
+    """Full-screen touch, with one key button."""
+    lay = pad.clean_layout({"name": "s", "mode": "screen", "controls": [KEY1]})
     return pad.Pad(lay, W, H, {"mode": "screen", **extra})
+
+
+def test_the_full_screen_default_is_the_handle_alone():
+    lay = pad.clean_layout(pad.TOUCH)
+    assert [c["id"] for c in lay["controls"]] == ["menu"] and lay["mode"] == "screen"
+    stray = pad.clean_layout({"name": "x", "mode": "screen", "controls": [{"id": "a"}, {"id": "ls"}]})
+    assert [c["id"] for c in stray["controls"]] == ["menu"], "a full-screen layout has no gamepad controls"
 
 
 def test_full_screen_a_tap_puts_the_cursor_there_and_clicks():
@@ -349,7 +390,7 @@ def test_full_screen_two_fingers_scroll_or_tap_for_a_right_click():
 def test_full_screen_leaves_only_the_handle_and_the_keys_and_the_handle_pauses_it():
     p = screen()
     assert {c.id for c in p.visible()} == {"menu", "k1"}
-    ax, ay, _ = centre(p.layout, "a")
+    ax, ay = DEF["a"]["x"] * W, DEF["a"]["y"] * H
     p.down(1, ax, ay, 0.0)
     assert p.take_events() == [("to", ax, ay)], "where A would be is just screen"
     p.up(1, 0.1)
@@ -436,7 +477,8 @@ def test_the_status_route_says_what_this_machine_can_do(app):
 def test_layouts_are_one_file_each_and_a_saved_default_overrides_the_built_in(app):
     call, data = app
     _, before = call("/api/layouts")
-    assert [lay["id"] for lay in before["layouts"]] == ["default"]
+    assert [lay["id"] for lay in before["layouts"]["pad"]] == ["default"]
+    before["layouts"] = before["layouts"]["pad"]
     lay = dict(before["layouts"][0], name="Wide", id="Wide Pad!")
     lay["controls"][0]["x"] = 0.33
     status, saved = call("/api/layouts/save", {"layout": lay, "activate": True})
@@ -446,6 +488,7 @@ def test_layouts_are_one_file_each_and_a_saved_default_overrides_the_built_in(ap
     default["controls"][0]["y"] = 0.5
     call("/api/layouts/save", {"layout": default})
     _, after = call("/api/layouts")
+    after["layouts"] = after["layouts"]["pad"]
     assert [lay["id"] for lay in after["layouts"]] == ["default", "wide-pad"]
     assert after["layouts"][0]["controls"][0]["y"] == 0.5, "default.json overrides the built-in default"
     assert after["settings"]["active"] == "wide-pad"
@@ -454,25 +497,44 @@ def test_layouts_are_one_file_each_and_a_saved_default_overrides_the_built_in(ap
 def test_deleting_a_layout_leaves_a_tombstone_the_sync_can_carry(app):
     call, data = app
     _, before = call("/api/layouts")
+    before["layouts"] = before["layouts"]["pad"]
     call("/api/layouts/save", {"layout": dict(before["layouts"][0], id="gone", name="Gone"), "activate": True})
     status, body = call("/api/layouts/delete", {"id": "gone"})
     assert status == 200 and body["settings"]["active"] == "default", "deleting the active layout falls back"
     assert json.load(open(data / "layouts" / "gone.json")) == {"id": "gone", "deleted": True}
-    assert [lay["id"] for lay in call("/api/layouts")[1]["layouts"]] == ["default"]
+    assert [lay["id"] for lay in call("/api/layouts")[1]["layouts"]["pad"]] == ["default"]
     assert call("/api/layouts/delete", {"id": "default"})[0] == 404, "the built-in default has nothing to delete"
+
+
+def test_full_screen_layouts_live_apart_from_controller_layouts(app):
+    call, data = app
+    touch = {"name": "Default", "mode": "screen", "controls": [{"id": "menu", "x": 0.9, "y": 0.1},
+                                                               {"id": "k1", "key": "KeyE", "label": "End turn"}]}
+    status, body = call("/api/layouts/save", {"layout": touch, "activate": True})
+    assert status == 200 and body["settings"]["active_screen"] == "default" and body["settings"]["active"] == "default"
+    assert (data / "touch-layouts" / "default.json").is_file() and not (data / "layouts" / "default.json").exists(), \
+        "the full-screen Default is its own file: the controller's Default is untouched"
+    listing = call("/api/layouts")[1]["layouts"]
+    assert [c["id"] for c in listing["screen"][0]["controls"]] == ["menu", "k1"]
+    assert "a" in [c["id"] for c in listing["pad"][0]["controls"]]
+    call("/api/layouts/save", {"layout": {"name": "Spire", "mode": "screen", "controls": []}, "activate": True})
+    assert call("/api/settings", {"mode": "screen"})[1]["settings"]["active_screen"] == "spire"
+    assert call("/api/settings", {"active_screen": "nowhere"})[0] == 404
+    status, body = call("/api/layouts/delete", {"id": "spire", "mode": "screen"})
+    assert status == 200 and body["settings"]["active_screen"] == "default"
 
 
 def test_settings_are_checked(app):
     call, _ = app
     assert call("/api/settings", {"active": "nowhere"})[0] == 404
     status, body = call("/api/settings", {"opacity": 0.4, "snap": 5})
-    assert status == 200 and body["settings"] == {"active": "default", "opacity": 0.4, "snap": 5.0, "mirror": True,
-                                                  "speed": 5, "idle": 1.0, "floating": False, "mode": "pad",
-                                                  "hold": 0.5}
+    assert status == 200 and body["settings"] == {"active": "default", "active_screen": "default", "opacity": 0.4,
+                                                  "snap": 5.0, "mirror": True, "speed": 5, "idle": 1.0,
+                                                  "floating": False, "mode": "pad", "hold": 0.5}
     status, body = call("/api/settings", {"mode": "screen", "hold": 0.8})
     assert status == 200 and (body["settings"]["mode"], body["settings"]["hold"]) == ("screen", 0.8)
     listing = call("/api/layouts")[1]
-    assert listing["symmetry"]["cluster"] == list(pad.CLUSTER) and "Escape" in listing["keys"]
+    assert listing["symmetry"]["cluster"] == list(pad.CLUSTER) and ["Escape", "Esc"] in listing["codes"]
     assert call("/api/layouts/save", {"layout": {"controls": []}})[0] == 400, "a layout needs a name"
 
 

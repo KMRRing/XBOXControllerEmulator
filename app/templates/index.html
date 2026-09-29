@@ -41,7 +41,7 @@
       layout stay on screen. A mouse or the keyboard's touchpad is ignored while it is on.</p>
   </section>
 
-  <section class="live" aria-labelledby="h-live">
+  <section class="live pad-only" aria-labelledby="h-live">
     <h2 id="h-live">What the game sees</h2>
     <div class="readout" id="readout">
       <div class="stick" data-s="l"><i></i></div>
@@ -51,31 +51,35 @@
   </section>
 
   <section class="edit" aria-labelledby="h-edit">
-    <h2 id="h-edit">Layout</h2>
+    <h2 id="h-edit"><span id="edit-title">Layout</span></h2>
     <div class="row">
       <label class="field grow">Layout
         <select id="layout"></select></label>
       <label class="field">Opacity <output id="op-out"></output>
         <input id="opacity" type="range" min="25" max="100" step="5"></label>
-      <label class="field">Idle controls <output id="idle-out"></output>
+      <label class="field pad-only">Idle controls <output id="idle-out"></output>
         <input id="idle" type="range" min="0" max="100" step="5"></label>
-      <label class="field">Pointer speed <output id="speed-out"></output>
+      <label class="field pad-only">Pointer speed <output id="speed-out"></output>
         <input id="speed" type="range" min="1" max="10" step="1"></label>
-      <label class="check"><input id="floating" type="checkbox"> Floating sticks</label>
+      <label class="check pad-only"><input id="floating" type="checkbox"> Floating sticks</label>
     </div>
-    <p class="hint">Idle controls below 100 % is the ghost mode: a control fades to that much of the opacity until a
-      finger is on it, 0 % being invisible. Floating sticks centre wherever the thumb lands. The trackpad, the mouse
-      buttons and the keys K1–K4 are off until you switch them on below: on the trackpad, drag moves the cursor,
-      tap clicks, two fingers tap for a right click, tap and go straight back down to drag, two fingers up and
-      down scroll.</p>
+    <p class="hint pad-only">Idle controls below 100 % is the ghost mode: a control fades to that much of the opacity
+      until a finger is on it, 0 % being invisible. Floating sticks centre wherever the thumb lands. The trackpad and
+      the mouse buttons are off until you switch them on below: on the trackpad, drag moves the cursor, tap clicks,
+      two fingers tap for a right click, tap and go straight back down to drag, two fingers up and down scroll.</p>
+    <p class="hint screen-only" hidden>A full-screen touch layout is the On/Off handle and the key buttons you give it —
+      the rest of the screen is the mouse. Each layout is separate from the controller's.</p>
     <div class="row tools">
       <label class="field">Snap to a grid
         <select id="snap"></select></label>
-      <label class="check"><input id="mirror" type="checkbox"> Mirror left and right</label>
+      <label class="check pad-only"><input id="mirror" type="checkbox"> Mirror left and right</label>
+      <button id="addkey" type="button" class="small">Add key</button>
     </div>
-    <p class="hint">Drag a control to move it; arrow keys nudge it one grid step, Shift for four. With Mirror on, the
-      right side follows the left: LT/RT, LB/RB, Back/Start and the stick clicks match in place and size; A B X Y move
-      and size as one cluster whose centre mirrors the left stick; the right stick mirrors the D-pad.</p>
+    <p class="hint">Drag a control to move it; arrow keys nudge it one grid step, Shift for four. <b>Add key</b> puts a
+      key button on the pad and listens: press the key, or a combination like Ctrl+S, to bind it.<span class="pad-only">
+      With Mirror on, the right side follows the left: LT/RT, LB/RB, Back/Start and the stick clicks match in place and
+      size; A B X Y move and size as one cluster whose centre mirrors the left stick; the right stick mirrors the
+      D-pad.</span></p>
     <div class="stage" id="stage" tabindex="0" aria-label="Layout editor"></div>
     <div class="inspector" id="inspector" hidden>
       <strong id="i-name"></strong>
@@ -87,9 +91,19 @@
         <input id="i-spread" type="range" min="5" max="30" step="0.5"></label>
       <label class="field">Position <span class="num">x <input id="i-x" type="number" min="0" max="100" step="0.5"> %
         &nbsp; y <input id="i-y" type="number" min="0" max="100" step="0.5"> %</span></label>
-      <label class="field" id="i-key-f">Key
-        <select id="i-key"></select></label>
-      <label class="check"><input id="i-on" type="checkbox"> On the pad</label>
+      <label class="check" id="i-on-f"><input id="i-on" type="checkbox"> On the pad</label>
+      <div class="keybind" id="i-key-f">
+        <div class="field">Sends
+          <span class="num"><kbd id="i-chord"></kbd>
+            <button id="i-rec" type="button" class="small">Record</button></span></div>
+        <label class="field">Or pick
+          <span class="num"><select id="i-key"></select>
+            <label class="check"><input id="i-ctrl" type="checkbox"> Ctrl</label>
+            <label class="check"><input id="i-shift" type="checkbox"> Shift</label>
+            <label class="check"><input id="i-alt" type="checkbox"> Alt</label></span></label>
+        <label class="field">Label <input id="i-label" type="text" maxlength="16" aria-label="Label on the button"></label>
+        <button id="i-remove" type="button" class="quiet danger">Remove key</button>
+      </div>
     </div>
     <div class="row actions">
       <button id="save" type="button" disabled>Save</button>

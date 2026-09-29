@@ -11,14 +11,15 @@ proportions on any resolution. Rectangular controls carry `w`, their width as a 
     trackpad   a laptop trackpad: drag moves the mouse cursor, tap clicks, two-finger tap right-clicks,
                tap-then-drag drags, two fingers up and down scroll
     click      the mouse's own buttons, for holding while the trackpad moves
-    key        a keyboard key, chosen per control (K1..K4)
+    key        a key, or a combination like Ctrl+S — as many as a layout wants (k1..k24), each recorded from
+               the keyboard or picked from a list
     menu       the overlay's own handle — tap to hide/show the pad, hold to close the overlay
 
-Two modes. "pad" is the controller above. "screen" (full-screen touch) turns the whole screen into a direct
+Every layout belongs to a mode. "pad" is the controller above. "screen" (full-screen touch) turns the whole screen into a direct
 touch surface for games whose own touch handling is broken: the cursor goes where the finger lands, a tap is a
 left click there, a tap that drags presses at the start and drags, holding still arms a right click (released
-on lift), two fingers scroll or, tapped together, right-click. Only the menu handle and the key buttons stay on
-screen; the gamepad controls are not there to be hit.
+on lift), two fingers scroll or, tapped together, right-click. A full-screen layout is the menu handle and
+whatever key buttons it was given — by default the handle alone.
 
 Two things come out. The report is the XInput gamepad state (XUSB_REPORT: 16 button bits, two 8-bit
 triggers, four signed 16-bit stick axes with up positive). The events are what the trackpad, the mouse
@@ -51,22 +52,84 @@ CATALOGUE = {
     "l3": ("button", "LS", "circle"), "r3": ("button", "RS", "circle"),
     "trackpad": ("trackpad", "", "rect"),
     "lmb": ("click", "LMB", "rect"), "rmb": ("click", "RMB", "rect"),
-    "k1": ("key", "K1", "circle"), "k2": ("key", "K2", "circle"), "k3": ("key", "K3", "circle"), "k4": ("key", "K4", "circle"),
     "menu": ("menu", "Pad", "circle"),
 }
-ORDER = list(CATALOGUE)
+KEY_SPEC = ("key", "", "rect")                   # key buttons are added and removed: ids k1..k24
+KEY_ID = re.compile(r"^k([1-9]|1[0-9]|2[0-4])$")
+MAX_KEYS = 24
 MOUSE_BUTTON = {"lmb": "left", "rmb": "right"}
 
-# The keys a key control can be: name -> Windows virtual-key code. Extended keys carry the flag the
-# keyboard driver would; games reading scan codes tell the arrows from the numeric keypad by it.
-KEYS = {"Escape": 0x1B, "Enter": 0x0D, "Space": 0x20, "Tab": 0x09, "Backspace": 0x08, "Shift": 0x10,
-        "Ctrl": 0x11, "Alt": 0x12, "Up": 0x26, "Down": 0x28, "Left": 0x25, "Right": 0x27,
-        "Home": 0x24, "End": 0x23, "PageUp": 0x21, "PageDown": 0x22, "Insert": 0x2D, "Delete": 0x2E}
-KEYS.update({f"F{n}": 0x6F + n for n in range(1, 13)})
-KEYS.update({str(n): 0x30 + n for n in range(10)})
-KEYS.update({chr(c): c for c in range(0x41, 0x5B)})
-EXTENDED = {"Up", "Down", "Left", "Right", "Home", "End", "PageUp", "PageDown", "Insert", "Delete"}
-DEFAULT_KEY = {"k1": "Escape", "k2": "Space", "k3": "Enter", "k4": "Tab"}
+
+def spec(cid: str) -> tuple:
+    return CATALOGUE.get(cid) or KEY_SPEC
+
+# The keys a key button can send, by their browser name (KeyboardEvent.code) — a key's position on the keyboard,
+# not its letter: code -> (scan code, extended, label). The page records the physical key and the overlay sends
+# its scan code back, so on any keyboard layout the game gets the very key that was pressed while recording.
+CODES = {}
+for _i, _c in enumerate("QWERTYUIOP"):
+    CODES[f"Key{_c}"] = (0x10 + _i, False, _c)
+for _i, _c in enumerate("ASDFGHJKL"):
+    CODES[f"Key{_c}"] = (0x1E + _i, False, _c)
+for _i, _c in enumerate("ZXCVBNM"):
+    CODES[f"Key{_c}"] = (0x2C + _i, False, _c)
+for _n in range(1, 10):
+    CODES[f"Digit{_n}"] = (0x01 + _n, False, str(_n))
+CODES["Digit0"] = (0x0B, False, "0")
+for _n in range(1, 11):
+    CODES[f"F{_n}"] = (0x3A + _n, False, f"F{_n}")
+CODES.update({
+    "F11": (0x57, False, "F11"), "F12": (0x58, False, "F12"),
+    "Escape": (0x01, False, "Esc"), "Tab": (0x0F, False, "Tab"), "CapsLock": (0x3A, False, "Caps"),
+    "Space": (0x39, False, "Space"), "Enter": (0x1C, False, "Enter"), "Backspace": (0x0E, False, "Bksp"),
+    "ShiftLeft": (0x2A, False, "Shift"), "ShiftRight": (0x36, False, "RShift"),
+    "ControlLeft": (0x1D, False, "Ctrl"), "ControlRight": (0x1D, True, "RCtrl"),
+    "AltLeft": (0x38, False, "Alt"), "AltRight": (0x38, True, "AltGr"),
+    "ArrowUp": (0x48, True, "\u2191"), "ArrowDown": (0x50, True, "\u2193"),
+    "ArrowLeft": (0x4B, True, "\u2190"), "ArrowRight": (0x4D, True, "\u2192"),
+    "Home": (0x47, True, "Home"), "End": (0x4F, True, "End"), "PageUp": (0x49, True, "PgUp"),
+    "PageDown": (0x51, True, "PgDn"), "Insert": (0x52, True, "Ins"), "Delete": (0x53, True, "Del"),
+    "ContextMenu": (0x5D, True, "Menu"),
+    "Minus": (0x0C, False, "-"), "Equal": (0x0D, False, "="), "BracketLeft": (0x1A, False, "["),
+    "BracketRight": (0x1B, False, "]"), "Backslash": (0x2B, False, "\\"), "Semicolon": (0x27, False, ";"),
+    "Quote": (0x28, False, "'"), "Backquote": (0x29, False, "`"), "Comma": (0x33, False, ","),
+    "Period": (0x34, False, "."), "Slash": (0x35, False, "/"), "IntlBackslash": (0x56, False, "<"),
+    "Numpad0": (0x52, False, "Num0"), "Numpad1": (0x4F, False, "Num1"), "Numpad2": (0x50, False, "Num2"),
+    "Numpad3": (0x51, False, "Num3"), "Numpad4": (0x4B, False, "Num4"), "Numpad5": (0x4C, False, "Num5"),
+    "Numpad6": (0x4D, False, "Num6"), "Numpad7": (0x47, False, "Num7"), "Numpad8": (0x48, False, "Num8"),
+    "Numpad9": (0x49, False, "Num9"), "NumpadDecimal": (0x53, False, "Num."), "NumpadAdd": (0x4E, False, "Num+"),
+    "NumpadSubtract": (0x4A, False, "Num-"), "NumpadMultiply": (0x37, False, "Num*"),
+    "NumpadDivide": (0x35, True, "Num/"), "NumpadEnter": (0x1C, True, "NumEnter"),
+})
+MODIFIERS = ("ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight")
+# The key names of v0.3/v0.4 layouts, so their key buttons carry over.
+_OLD = {"Shift": "ShiftLeft", "Ctrl": "ControlLeft", "Alt": "AltLeft", "Up": "ArrowUp", "Down": "ArrowDown",
+        "Left": "ArrowLeft", "Right": "ArrowRight"}
+_OLD.update({str(_n): f"Digit{_n}" for _n in range(10)})
+_OLD.update({chr(_c): f"Key{chr(_c)}" for _c in range(0x41, 0x5B)})
+
+
+def clean_chord(value) -> str | None:
+    """A key or a combination, as "ControlLeft+KeyS": modifiers first in a fixed order, then at most one other
+    key. None if it is not something the overlay can send."""
+    if not isinstance(value, str) or not value:
+        return None
+    parts = []
+    for part in value.split("+"):
+        part = _OLD.get(part, part)
+        if part not in CODES or part in parts:
+            return None
+        parts.append(part)
+    mods = [m for m in MODIFIERS if m in parts]
+    rest = [p for p in parts if p not in MODIFIERS]
+    if len(rest) > 1 or len(parts) > 4:
+        return None
+    return "+".join(mods + rest)
+
+
+def chord_label(chord: str) -> str:
+    return "+".join(CODES[p][2] for p in chord.split("+"))
+
 
 HOLD_TO_CLOSE = 1.2          # seconds on the menu handle that close the overlay rather than hide the pad
 STICK_REACH = 1.5            # a stick is grabbed anywhere within 1.5x its radius
@@ -101,10 +164,16 @@ DEFAULT = {
         _c("b", 0.945, 0.56, 0.105), _c("a", 0.865, 0.68, 0.105),
         _c("trackpad", 0.50, 0.55, 0.30, 1.6, on=False),
         _c("lmb", 0.44, 0.80, 0.06, 1.6, on=False), _c("rmb", 0.56, 0.80, 0.06, 1.6, on=False),
-        _c("k1", 0.40, 0.24, 0.065, on=False), _c("k2", 0.47, 0.24, 0.065, on=False),
-        _c("k3", 0.53, 0.24, 0.065, on=False), _c("k4", 0.60, 0.24, 0.065, on=False),
     ],
 }
+
+TOUCH = {                                         # full-screen touch: the handle, and nothing else until keys are added
+    "id": "default",
+    "name": "Default",
+    "mode": "screen",
+    "controls": [_c("menu", 0.50, 0.07, 0.07)],
+}
+BUILT_IN = {"pad": DEFAULT, "screen": TOUCH}
 
 # The editor's symmetry: each left control and the right one that follows it. TWINS match position, size and
 # width; CENTRE_TWINS match position only. The face buttons move and size as one cluster; their centre is what
@@ -115,7 +184,7 @@ CLUSTER = ("a", "b", "x", "y")
 CENTRE_TWINS = (("ls", "cluster"), ("dpad", "rs"))
 SNAP_STEPS = (0.0, 1.0, 2.5, 5.0)                 # per cent of the screen's short side; 0 is off
 
-SETTINGS = {"active": "default", "opacity": 0.6, "snap": 2.5, "mirror": True,
+SETTINGS = {"active": "default", "active_screen": "default", "opacity": 0.6, "snap": 2.5, "mirror": True,
             "speed": 5, "idle": 1.0, "floating": False, "mode": "pad", "hold": 0.5}
 MODES = ("pad", "screen")
 
@@ -133,32 +202,44 @@ def _num(v, lo, hi, default):
     return default if math.isnan(v) else min(hi, max(lo, v))
 
 
+def _clean_control(base: dict, c: dict) -> dict:
+    return {"id": base["id"],
+            "x": round(_num(c.get("x"), 0.0, 1.0, base["x"]), 4),
+            "y": round(_num(c.get("y"), 0.0, 1.0, base["y"]), 4),
+            "s": round(_num(c.get("s"), 0.03, 0.6, base["s"]), 4),
+            "w": round(_num(c.get("w"), 1.0, 4.0, base["w"]), 3),
+            "on": True if base["id"] == "menu" else bool(c.get("on", base["on"]))}
+
+
 def clean_layout(raw) -> dict:
-    """Whatever the page (or a synced file) sends, what comes back is a layout the overlay can draw: every
-    known control exactly once, in range; unknown ids dropped; missing ones taken from the default."""
+    """Whatever the page (or a synced file) sends, what comes back is a layout the overlay can draw: its mode's
+    fixed controls exactly once, in range, missing ones taken from the built-in; then its key buttons, each with
+    a key it can send. Unknown ids are dropped. A key switched off — how v0.3 and v0.4 kept their four unused
+    keys — is dropped too: keys are added and removed now."""
     raw = raw if isinstance(raw, dict) else {}
-    given = {c.get("id"): c for c in raw.get("controls") or [] if isinstance(c, dict)}
-    out = []
-    for base in DEFAULT["controls"]:
-        c = given.get(base["id"]) or {}
-        clean = {"id": base["id"],
-                 "x": round(_num(c.get("x"), 0.0, 1.0, base["x"]), 4),
-                 "y": round(_num(c.get("y"), 0.0, 1.0, base["y"]), 4),
-                 "s": round(_num(c.get("s"), 0.03, 0.6, base["s"]), 4),
-                 "w": round(_num(c.get("w"), 1.0, 4.0, base["w"]), 3),
-                 "on": True if base["id"] == "menu" else bool(c.get("on", base["on"]))}
-        if base["id"] in DEFAULT_KEY:
-            key = c.get("key")
-            clean["key"] = key if key in KEYS else DEFAULT_KEY[base["id"]]
-        out.append(clean)
+    mode = raw.get("mode") if raw.get("mode") in MODES else "pad"
+    given = [c for c in raw.get("controls") or [] if isinstance(c, dict)]
+    by_id = {c.get("id"): c for c in given}
+    out = [_clean_control(base, by_id.get(base["id"]) or {}) for base in BUILT_IN[mode]["controls"]]
+    keys = sorted({c["id"] for c in given if isinstance(c.get("id"), str) and KEY_ID.match(c["id"])},
+                  key=lambda k: int(k[1:]))
+    for kid in keys:
+        c = by_id[kid]
+        if c.get("on") is False:
+            continue
+        key = clean_chord(c.get("key")) or "Space"
+        label = str(c.get("label") or "").strip()[:16] if clean_chord(c.get("key")) else ""
+        out.append({**_clean_control({"id": kid, "x": 0.5, "y": 0.5, "s": 0.08, "w": 1.0, "on": True}, c),
+                    "on": True, "key": key, "label": label or chord_label(key)})
     name = str(raw.get("name") or "").strip()[:60] or "Untitled"
-    return {"id": slug(raw.get("id") or name), "name": name, "controls": out}
+    return {"id": slug(raw.get("id") or name), "name": name, "mode": mode, "controls": out}
 
 
 def clean_settings(raw) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     snap = _num(raw.get("snap"), 0.0, 5.0, SETTINGS["snap"])
     return {"active": slug(raw.get("active") or SETTINGS["active"]),
+            "active_screen": slug(raw.get("active_screen") or SETTINGS["active_screen"]),
             "opacity": round(_num(raw.get("opacity"), 0.25, 1.0, SETTINGS["opacity"]), 2),
             "snap": min(SNAP_STEPS, key=lambda step: abs(step - snap)),
             "mirror": bool(raw.get("mirror", SETTINGS["mirror"])),
@@ -175,11 +256,9 @@ class Placed:
 
     def __init__(self, c: dict, width: int, height: int):
         self.id = c["id"]
-        self.kind, self.label, self.shape = CATALOGUE[self.id]
+        self.kind, self.label, self.shape = spec(self.id)
         if self.kind == "key":
-            self.key = c["key"]
-            self.label = {"Escape": "Esc", "Backspace": "Bksp", "PageUp": "PgUp", "PageDown": "PgDn",
-                          "Insert": "Ins", "Delete": "Del", "Space": "Spc"}.get(self.key, self.key)
+            self.key, self.label = c["key"], c["label"]
         unit = min(width, height)
         self.cx, self.cy = c["x"] * width, c["y"] * height
         self.h = c["s"] * unit

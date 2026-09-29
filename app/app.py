@@ -10,9 +10,12 @@ This file is the page's side: the driver, the overlay, and the layouts.
 
 Data, under frame.DATA — one file per layout, because the sync is newest-wins per file:
 
-    layouts/<id>.json     a layout; layouts/default.json, if present, overrides the built-in one;
-                          a deleted layout is a tombstone {"deleted": true}, because the sync never deletes
-    settings.json         which layout is active, and the pad's opacity
+    layouts/<id>.json         a controller layout; layouts/default.json, if present, overrides the built-in one
+    touch-layouts/<id>.json   a full-screen touch layout, the same way — two folders, so the two kinds of
+                              layout never share a name
+    settings.json             the mode, the active layout of each mode, and the pad's other settings
+
+A deleted layout is a tombstone {"deleted": true}, because the sync carries files, never deletions.
 """
 from __future__ import annotations
 
@@ -29,7 +32,8 @@ make_server = frame.make_server                    # the iOS launcher runs the a
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 INSTALLER = os.path.join(ROOT, "driver", "ViGEmBus_1.22.0_x64_x86_arm64.exe")
-LAYOUTS = os.path.join(frame.DATA, "layouts")
+FOLDERS = {"pad": os.path.join(frame.DATA, "layouts"), "screen": os.path.join(frame.DATA, "touch-layouts")}
+ACTIVE = {"pad": "active", "screen": "active_screen"}      # the settings key naming each mode's active layout
 SETTINGS = os.path.join(frame.DATA, "settings.json")
 
 OVERLAY = overlaylib.Overlay(frame.port())
@@ -52,15 +56,16 @@ def _write(path: str, obj) -> None:
     os.replace(tmp, path)
 
 
-def layouts() -> dict:
-    """Every layout by id: the built-in default, overridden by a saved one of the same id."""
-    out = {"default": padlib.clean_layout(padlib.DEFAULT)}
-    if os.path.isdir(LAYOUTS):
-        for name in sorted(os.listdir(LAYOUTS)):
+def layouts(mode: str) -> dict:
+    """Every layout of a mode by id: the built-in default, overridden by a saved one of the same id."""
+    out = {"default": padlib.clean_layout(padlib.BUILT_IN[mode])}
+    folder = FOLDERS[mode]
+    if os.path.isdir(folder):
+        for name in sorted(os.listdir(folder)):
             if name.endswith(".json"):
-                raw = _read(os.path.join(LAYOUTS, name), None)
+                raw = _read(os.path.join(folder, name), None)
                 if isinstance(raw, dict) and not raw.get("deleted"):
-                    lay = padlib.clean_layout({**raw, "id": name[:-5]})
+                    lay = padlib.clean_layout({**raw, "id": name[:-5], "mode": mode})
                     out[lay["id"]] = lay
     return out
 
@@ -70,9 +75,14 @@ def settings() -> dict:
 
 
 def active() -> tuple:
+    """The layout the overlay shows — the active one of the current mode — and the settings."""
     s = settings()
-    every = layouts()
-    return every.get(s["active"]) or every["default"], s
+    every = layouts(s["mode"])
+    return every.get(s[ACTIVE[s["mode"]]]) or every["default"], s
+
+
+def _mode(value) -> str:
+    return value if value in padlib.MODES else "pad"
 
 
 def refresh_overlay() -> None:
@@ -129,12 +139,12 @@ def overlay_stop(request):
 
 @frame.route("GET", "/api/layouts")
 def layouts_list(request):
-    return {"layouts": list(layouts().values()), "settings": settings(),
+    return {"layouts": {mode: list(layouts(mode).values()) for mode in padlib.MODES}, "settings": settings(),
             "catalogue": {k: {"kind": v[0], "label": v[1], "shape": v[2]} for k, v in padlib.CATALOGUE.items()},
             "symmetry": {"twins": padlib.TWINS, "cluster": padlib.CLUSTER, "centre_twins": padlib.CENTRE_TWINS,
                          "snap_steps": padlib.SNAP_STEPS},
-            "keys": list(padlib.KEYS),
-            "default": padlib.clean_layout(padlib.DEFAULT)}
+            "codes": [[code, label] for code, (_, _, label) in padlib.CODES.items()],
+            "max_keys": padlib.MAX_KEYS}
 
 
 @frame.route("POST", "/api/layouts/save")
@@ -144,22 +154,23 @@ def layouts_save(request):
     if not isinstance(raw, dict) or not str(raw.get("name") or "").strip():
         return 400, {"error": "A layout needs a name."}
     layout = padlib.clean_layout(raw)
-    _write(os.path.join(LAYOUTS, layout["id"] + ".json"), layout)
+    _write(os.path.join(FOLDERS[layout["mode"]], layout["id"] + ".json"), layout)
     if body.get("activate"):
-        _write(SETTINGS, {**settings(), "active": layout["id"]})
+        _write(SETTINGS, {**settings(), ACTIVE[layout["mode"]]: layout["id"]})
     refresh_overlay()
     return {"ok": True, "layout": layout, "settings": settings()}
 
 
 @frame.route("POST", "/api/layouts/delete")
 def layouts_delete(request):
+    mode = _mode(request.json.get("mode"))
     lid = padlib.slug(request.json.get("id") or "")
-    path = os.path.join(LAYOUTS, lid + ".json")
+    path = os.path.join(FOLDERS[mode], lid + ".json")
     if not os.path.isfile(path):
         return 404, {"error": "No saved layout by that name."}
     _write(path, {"id": lid, "deleted": True})         # a tombstone: the sync carries files, never deletions
-    if settings()["active"] == lid and lid != "default":
-        _write(SETTINGS, {**settings(), "active": "default"})
+    if settings()[ACTIVE[mode]] == lid and lid != "default":
+        _write(SETTINGS, {**settings(), ACTIVE[mode]: "default"})
     refresh_overlay()
     return {"ok": True, "settings": settings()}
 
@@ -167,8 +178,9 @@ def layouts_delete(request):
 @frame.route("POST", "/api/settings")
 def settings_save(request):
     s = padlib.clean_settings({**settings(), **request.json})
-    if s["active"] not in layouts():
-        return 404, {"error": "No layout by that name."}
+    for mode in padlib.MODES:
+        if s[ACTIVE[mode]] not in layouts(mode):
+            return 404, {"error": "No layout by that name."}
     _write(SETTINGS, s)
     refresh_overlay()
     return {"ok": True, "settings": s}

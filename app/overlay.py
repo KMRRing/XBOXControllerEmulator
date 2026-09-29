@@ -141,7 +141,6 @@ def api() -> dict:
         "GetCursorPos": bind(u32, "GetCursorPos", B, ctypes.POINTER(wintypes.POINT)),
         "GetSystemMetrics": bind(u32, "GetSystemMetrics", I, I),
         "WindowFromPoint": bind(u32, "WindowFromPoint", W, wintypes.POINT),
-        "MapVirtualKeyW": bind(u32, "MapVirtualKeyW", U, U, U),
         "GetWindowLongPtrW": bind(u32, "GetWindowLongPtrW" if ctypes.sizeof(P) == 8 else "GetWindowLongW", ctypes.c_ssize_t, W, I),
         "SetWindowLongPtrW": bind(u32, "SetWindowLongPtrW" if ctypes.sizeof(P) == 8 else "SetWindowLongW", ctypes.c_ssize_t, W, I, ctypes.c_ssize_t),
         "SetProcessDPIAware": bind(u32, "SetProcessDPIAware", B, optional=True),
@@ -169,18 +168,20 @@ def _xy(lparam: int) -> tuple:
 
 
 # --------------------------------------------------------------------------------- what the trackpad and the keys inject
+# The input records, with Windows' sizes spelled out (LONG and DWORD are 32 bits on Windows, whatever the
+# machine running the tests thinks), so SendInput's size check and the tests agree.
 class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long), ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+    _fields_ = [("dx", ctypes.c_int32), ("dy", ctypes.c_int32), ("mouseData", ctypes.c_uint32),
+                ("dwFlags", ctypes.c_uint32), ("time", ctypes.c_uint32), ("dwExtraInfo", ctypes.c_size_t)]
 
 
 class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
-                ("dwExtraInfo", ctypes.c_size_t)]
+    _fields_ = [("wVk", ctypes.c_uint16), ("wScan", ctypes.c_uint16), ("dwFlags", ctypes.c_uint32),
+                ("time", ctypes.c_uint32), ("dwExtraInfo", ctypes.c_size_t)]
 
 
 class HARDWAREINPUT(ctypes.Structure):
-    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD), ("wParamH", wintypes.WORD)]
+    _fields_ = [("uMsg", ctypes.c_uint32), ("wParamL", ctypes.c_uint16), ("wParamH", ctypes.c_uint16)]
 
 
 class _INPUT_UNION(ctypes.Union):
@@ -188,7 +189,7 @@ class _INPUT_UNION(ctypes.Union):
 
 
 class INPUT(ctypes.Structure):
-    _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
+    _fields_ = [("type", ctypes.c_uint32), ("u", _INPUT_UNION)]
 
 
 INPUT_MOUSE, INPUT_KEYBOARD = 0, 1
@@ -196,7 +197,7 @@ MOUSE_MOVE, MOUSE_WHEEL = 0x0001, 0x0800
 MOUSE_ABSOLUTE, MOUSE_VIRTUALDESK = 0x8000, 0x4000
 MOUSE_DOWN = {"left": 0x0002, "right": 0x0008}
 MOUSE_UP = {"left": 0x0004, "right": 0x0010}
-KEY_EXTENDED, KEY_UP = 0x0001, 0x0002
+KEY_EXTENDED, KEY_UP, KEY_SCANCODE = 0x0001, 0x0002, 0x0008
 WS_EX_TRANSPARENT, GWL_EXSTYLE = 0x00000020, -20
 
 
@@ -207,13 +208,20 @@ def mouse_input(flags: int, dx: int = 0, dy: int = 0, data: int = 0) -> INPUT:
     return i
 
 
-def key_input(name: str, up: bool) -> INPUT:
-    vk = padlib.KEYS[name]
+def key_input(code: str, up: bool) -> INPUT:
+    """One key, sent as its scan code — the key's position — so Windows turns it into whatever that key is on the
+    keyboard layout in use, exactly as it would for the physical key."""
+    scan, extended, _ = padlib.CODES[code]
     i = INPUT()
     i.type = INPUT_KEYBOARD
-    scan = api()["MapVirtualKeyW"](vk, 0)                       # MAPVK_VK_TO_VSC: the key as a keyboard sends it
-    i.u.ki = KEYBDINPUT(vk, scan, (KEY_EXTENDED if name in padlib.EXTENDED else 0) | (KEY_UP if up else 0), 0, 0)
+    i.u.ki = KEYBDINPUT(0, scan, KEY_SCANCODE | (KEY_EXTENDED if extended else 0) | (KEY_UP if up else 0), 0, 0)
     return i
+
+
+def chord_inputs(chord: str, up: bool) -> list:
+    """A combination goes down modifiers first and comes up in reverse, as fingers would do it."""
+    parts = chord.split("+")
+    return [key_input(p, up) for p in (reversed(parts) if up else parts)]
 
 
 def cursor_to(x: int, y: int) -> INPUT:
@@ -256,9 +264,9 @@ def inputs_for(events: list, origin: tuple = (0, 0)) -> list:
             out.append(mouse_input(MOUSE_DOWN[e[1]]))
             out.append(mouse_input(MOUSE_UP[e[1]]))
         elif kind == "keydown":
-            out.append(key_input(e[1], False))
+            out += chord_inputs(e[1], up=False)
         elif kind == "keyup":
-            out.append(key_input(e[1], True))
+            out += chord_inputs(e[1], up=True)
     if dx or dy:
         pt = wintypes.POINT()
         api()["GetCursorPos"](ctypes.byref(pt))
@@ -664,7 +672,7 @@ class Overlay:
     def _inject(self, events: list) -> None:
         """Mouse and keyboard input, into whatever is under the cursor.
 
-        Full-screen touch: the cursor is always over the solid base window, so every injection steps aside,
+        Full-screen touch: the cursor is always over the solid base window, so every mouse injection steps aside,
         and while a button is held — a drag — it stays aside until the button is let go. The controller: moves
         go straight in, and a button, a wheel or a key steps aside only when the cursor happens to be on one of
         the pad's controls. The short wait is for Windows to route the input before the windows are solid again."""
@@ -676,7 +684,8 @@ class Overlay:
             elif kind == "up":
                 self.held.discard(rest[0])
         records = inputs_for(events, (self.left, self.top_y))
-        if self._screen_mode():
+        mouse = any(e[0] not in ("keydown", "keyup") for e in events)
+        if self._screen_mode() and mouse:                 # keys go to the focused window wherever the cursor is
             self._step_aside(True)
             send_inputs(records)
             if not self.held:

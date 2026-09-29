@@ -164,6 +164,14 @@ input[type="number"] {
   border: 1px solid var(--seam); border-radius: .5rem; padding: .2rem .4rem; min-height: 1.9rem;
 }
 .tools { align-items: center; }
+.keybind { display: flex; flex-wrap: wrap; gap: .8rem 1.4rem; align-items: end; width: 100%; }
+.keybind input[type="text"] { min-height: 1.9rem; padding: .2rem .5rem; width: 9rem; }
+kbd {
+  font: 600 .95rem var(--sans); padding: .25rem .6rem; border-radius: .45rem; min-width: 3rem; text-align: center;
+  background: var(--carbon); color: #fff; box-shadow: inset 0 -2px 0 rgba(255,255,255,.18);
+}
+button.small.rec { background: var(--b); border-color: var(--b); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .55; } }
 .stage.grid {
   background-image:
     linear-gradient(to right, rgba(255,255,255,.10) 1px, transparent 1px),
@@ -208,4 +216,4 @@ footer {
   .stick { width: 3.4rem; height: 3.4rem; }
 }
 
-@media (prefers-reduced-motion: reduce) { .stick i { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .stick i { transition: none; } button.small.rec { animation: none; } }

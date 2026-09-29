@@ -41,8 +41,11 @@ it landed and drags; holding still arms a right click (a ring shows; lifting cli
 tapped together right-click; two quick taps land on the same pixel, so games see a double click. To let its own
 mouse input through to the game it makes itself click-through (`WS_EX_TRANSPARENT`) while injecting, and for
 the whole of a drag. The virtual controller is unplugged in this mode, so games do not switch their prompts to
-controller buttons. The handle (*Off* / *On*) hands the screen back to the game and takes it again; the key
-buttons of the active layout stay. A mouse or the keyboard's touchpad is ignored while it is on.
+controller buttons. The handle (*Off* / *On*) hands the screen back to the game and takes it again. A mouse or
+the keyboard's touchpad is ignored while it is on.
+
+Full-screen touch has **its own layouts**, apart from the controller's: the built-in one is the handle alone, and
+a layout adds whatever key buttons the game wants — Space, E for end turn, 1–9 for cards.
 
 Exclusive fullscreen is the one thing no overlay can draw over. Games go in borderless or windowed mode.
 
@@ -58,10 +61,16 @@ Exclusive fullscreen is the one thing no overlay can draw over. Games go in bord
   on it; at 0 % the pad is invisible until touched. Under the hood that is two windows: one carrying every
   control at the idle opacity (never fully transparent, because a transparent pixel cannot be touched), and one
   on top drawing only the controls in use at full opacity.
-* **Trackpad, mouse buttons, keys.** Off by default; switched on per layout. Drag moves the cursor, tap clicks,
+* **Trackpad and mouse buttons.** Off by default; switched on per layout. Drag moves the cursor, tap clicks,
   two fingers tap for a right click, tap and go straight back down to drag, two fingers up and down scroll.
-  LMB and RMB are for holding while the trackpad moves. K1–K4 each send one key, chosen from a list. *Pointer
-  speed* and *Floating sticks* (a stick centres wherever the thumb lands) are settings.
+  LMB and RMB are for holding while the trackpad moves. *Pointer speed* and *Floating sticks* (a stick centres
+  wherever the thumb lands) are settings.
+* **Key buttons.** *Add key* puts one on the layout (up to 24, in either mode) and listens: press a key, or a
+  combination like Ctrl+S, and that is what the button sends — or pick it from a list, with Ctrl / Shift / Alt.
+  What is recorded is the key's *position* (`KeyboardEvent.code`), and the overlay sends that key's scan code
+  back, so on any keyboard layout the game gets the very key that was pressed; the button is labelled with what
+  the key says on this keyboard, and the label can be renamed ("End turn"). A combination goes down modifiers
+  first and comes up in reverse.
 * **Layout.** Drag controls, size them by number, switch any of them off. A snap grid (1, 2.5 or 5 % of the
   screen's short side) keeps positions on a lattice; arrow keys nudge by one step. With *Mirror* on, the right
   side follows the left: LT/RT, LB/RB, Back/Start and the stick clicks match in place and size; A B X Y move and
@@ -87,11 +96,14 @@ Exclusive fullscreen is the one thing no overlay can draw over. Games go in bord
 
 Under `<home>/data`, where home is `%LOCALAPPDATA%\XBOXControllerEmulator`:
 
-    layouts/<id>.json   one file per layout — the sync is newest-wins per file, so layouts never clobber each
-                        other. layouts/default.json, if present, overrides the built-in default.
+    layouts/<id>.json         one file per controller layout — the sync is newest-wins per file, so layouts
+                              never clobber each other. layouts/default.json, if present, overrides the
+                              built-in default.
+    touch-layouts/<id>.json   the same for full-screen touch layouts; a separate folder, so the two kinds
+                              never share a name.
                         A deleted layout is a tombstone {"deleted": true}: the sync carries files, never deletions.
     settings.json       the mode (controller or full-screen touch), the hold time for a right click, the
-                        active layout, the opacity, the idle opacity, the pointer speed, floating sticks, and the
+                        active layout of each mode, the opacity, the idle opacity, the pointer speed, floating sticks, and the
                         editor's snap and mirror.
 
 Kilobytes, and nothing secret.
