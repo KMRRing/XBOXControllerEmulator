@@ -2,16 +2,16 @@
  "version": 1,
  "files": {
   "devices.json": {
-   "sha256": "73ad385ae4dae6a2539f35d3953666d89a77d7dfbc4e2d7ac82bfd34d9bf2238",
-   "updated_at": "2026-09-30T01:24:56",
+   "sha256": "6aa5d60ab30494f6c00965a17a067391024027c222c92355e8fe2f2e8b79b084",
+   "updated_at": "2026-10-01T01:32:25",
    "device": "SurfaceK",
    "bytes": 115
   },
   "settings.json": {
-   "sha256": "ab55bd86418438f3d58cf2e55f812ef7d6bf74d2e5fe5248c2d7777c1adb54f4",
-   "updated_at": "2026-09-30T01:24:57",
+   "sha256": "975ea2d049aee82f3a0be4bbfb7d26cfa31cb8649b0ae25ab453e2d9f38e46e7",
+   "updated_at": "2026-10-01T01:32:27",
    "device": "SurfaceK",
-   "bytes": 151
+   "bytes": 148
   },
   "layouts/base.json": {
    "sha256": "842a5a525937e127a72b9119bf531395aded2666537e20c3e0548d3cd8561597",
@@ -38,6 +38,6 @@
    "bytes": 1707
   }
  },
- "generated": "2026-09-30T01:25:03",
+ "generated": "2026-10-01T01:32:27",
  "device": "SurfaceK"
 }
