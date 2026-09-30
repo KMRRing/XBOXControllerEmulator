@@ -6,6 +6,6 @@
  "speed": 2,
  "idle": 0.2,
  "floating": false,
- "mode": "screen",
+ "mode": "pad",
  "hold": 0.5
 }
