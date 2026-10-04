@@ -1,5 +1,6 @@
 {
  "active": "base",
+ "active_screen": "default",
  "opacity": 0.55,
  "snap": 2.5,
  "mirror": false,
